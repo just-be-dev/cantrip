@@ -53,7 +53,7 @@ extension Store {
                 session.awaitingPush = false
             } else {
                 showHUD("⚠︎ \(title)")
-                NSLog("Incant: \(title)\n\(message)")
+                NSLog("Cantrip: \(title)\n\(message)")
             }
         }
     }

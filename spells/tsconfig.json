@@ -15,7 +15,7 @@
     "types": ["bun"],
     "typeRoots": ["../runtime/node_modules/@types"],
     "paths": {
-      "incant": ["../runtime/src/sdk/index.ts"],
+      "cantrip": ["../runtime/src/sdk/index.ts"],
       "effect/*": ["../runtime/node_modules/effect/dist/*.d.ts"]
     }
   }

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as HttpClient from "effect/http/HttpClient"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Schema from "effect/Schema"
-import { Action, Spell, Ui } from "incant"
+import { Action, Spell, Ui } from "cantrip"
 
 const SearchResult = Schema.Struct({
   objects: Schema.Array(Schema.Struct({

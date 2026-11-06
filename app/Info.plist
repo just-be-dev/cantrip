@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Incant</string>
+	<string>Cantrip</string>
 	<key>CFBundleDisplayName</key>
-	<string>Incant</string>
+	<string>Cantrip</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.just-be.incant</string>
+	<string>dev.just-be.cantrip</string>
 	<key>CFBundleExecutable</key>
-	<string>Incant</string>
+	<string>Cantrip</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

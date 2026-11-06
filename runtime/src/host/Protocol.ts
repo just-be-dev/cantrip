@@ -1,9 +1,9 @@
 /**
- * The wire protocol between Incant.app (Swift) and this host: one JSON object
+ * The wire protocol between Cantrip.app (Swift) and this host: one JSON object
  * per line. The app writes to our stdin, and we write to stdout. Logs go to
  * stderr.
  *
- * Keep in sync with app/Sources/Incant/Protocol.swift.
+ * Keep in sync with app/Sources/Cantrip/Protocol.swift.
  */
 import * as Schema from "effect/Schema"
 

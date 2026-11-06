@@ -1,6 +1,6 @@
 // A no-view spell: the bar hides right away and the spell runs in the background.
 import * as Effect from "effect/Effect"
-import { Spell, Ui } from "incant"
+import { Spell, Ui } from "cantrip"
 
 export default Spell.make({
   title: "Generate UUID",

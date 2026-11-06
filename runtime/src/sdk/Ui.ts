@@ -42,7 +42,7 @@ export class Ui extends Context.Service<Ui, {
   readonly copy: (text: string) => Effect.Effect<void>
   /** Open a URL, file, or app with the default handler. */
   readonly open: (target: string) => Effect.Effect<void>
-}>()("incant/Ui") {}
+}>()("cantrip/Ui") {}
 
 export const render = (view: View.View) => Ui.use((ui) => ui.render(view))
 export const push = (view: View.View | Effect.Effect<unknown, unknown, SpellServices>) =>

@@ -36,7 +36,7 @@ enum Builtin: String, CaseIterable {
         case .reloadSpells: "Reload Spells"
         case .openSpellsFolder: "Open Spells Folder"
         case .openLog: "Open Spell Host Log"
-        case .quit: "Quit Incant"
+        case .quit: "Quit Cantrip"
         }
     }
 
@@ -206,7 +206,7 @@ final class Store {
         for builtin in Builtin.allCases {
             let row = Row(
                 id: "builtin:\(builtin.rawValue)", title: builtin.title, subtitle: nil, icon: Icon(builtin.icon),
-                accessories: ["Incant"],
+                accessories: ["Cantrip"],
                 actions: [ActionItem(id: "run", title: builtin.title, icon: builtin.icon, kind: .builtin(builtin))])
             candidates.append((row, [builtin.title], usage[row.id] ?? 0))
         }
@@ -272,7 +272,7 @@ final class Store {
             host.send(.reload)
             showToast(Toast(style: .info, title: "Reloading spells…", message: nil))
         case .openSpellsFolder:
-            NSWorkspace.shared.open(IncantConfig.spellsDirectory)
+            NSWorkspace.shared.open(CantripConfig.spellsDirectory)
             hidePanel()
         case .openLog:
             NSWorkspace.shared.open(host.logURL)

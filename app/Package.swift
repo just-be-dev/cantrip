@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Incant",
+    name: "Cantrip",
     platforms: [.macOS(.v15)],
     targets: [
         .executableTarget(
-            name: "Incant",
-            path: "Sources/Incant",
+            name: "Cantrip",
+            path: "Sources/Cantrip",
             linkerSettings: [.linkedFramework("Carbon")]
         )
     ]

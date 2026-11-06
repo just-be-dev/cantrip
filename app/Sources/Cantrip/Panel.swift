@@ -3,7 +3,7 @@
 import AppKit
 import SwiftUI
 
-/// A borderless panel that takes keyboard focus without activating Incant,
+/// A borderless panel that takes keyboard focus without activating Cantrip,
 /// so the app you were in stays frontmost (like Spotlight).
 final class CommandPanel: NSPanel {
     init(size: NSSize) {
@@ -88,8 +88,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.setFrame(NSRect(origin: origin, size: Self.size), display: false)
     }
 
-    /// Set INCANT_KEEP_OPEN=1 to keep the bar up when it loses focus (handy while debugging spells).
-    private let keepOpen = ProcessInfo.processInfo.environment["INCANT_KEEP_OPEN"] != nil
+    /// Set CANTRIP_KEEP_OPEN=1 to keep the bar up when it loses focus (handy while debugging spells).
+    private let keepOpen = ProcessInfo.processInfo.environment["CANTRIP_KEEP_OPEN"] != nil
 
     func windowDidResignKey(_ notification: Notification) {
         if !keepOpen { hide() }

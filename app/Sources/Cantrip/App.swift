@@ -2,7 +2,7 @@ import AppKit
 
 @main
 @MainActor
-enum IncantMain {
+enum CantripMain {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -15,7 +15,7 @@ enum IncantMain {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var config = IncantConfig.load()
+    private var config = CantripConfig.load()
     private var host: SpellHost!
     private var store: Store!
     private var panel: PanelController!
@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKey()
         installStatusItem()
 
-        if ProcessInfo.processInfo.environment["INCANT_SHOW_ON_LAUNCH"] != nil { panel.show() }
+        if ProcessInfo.processInfo.environment["CANTRIP_SHOW_ON_LAUNCH"] != nil { panel.show() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func registerHotKey() {
         guard let parsed = config.parsedHotkey else {
-            NSLog("Incant: can't parse hotkey \"\(config.hotkey)\"")
+            NSLog("Cantrip: can't parse hotkey \"\(config.hotkey)\"")
             return
         }
         hotKey = HotKey(keyCode: parsed.keyCode, modifiers: parsed.modifiers) { [weak self] in
@@ -63,16 +63,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Incant")
+        item.button?.image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Cantrip")
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open Incant (\(config.hotkey))", action: #selector(openPanel), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Open Cantrip (\(config.hotkey))", action: #selector(openPanel), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Reload Spells", action: #selector(reloadSpells), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Restart Spell Host", action: #selector(restartHost), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Spells Folder", action: #selector(openSpells), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Host Log", action: #selector(openLog), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Incant", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Cantrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
         statusItem = item
     }
@@ -80,6 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openPanel() { panel.show() }
     @objc private func reloadSpells() { store.perform(builtin: .reloadSpells) }
     @objc private func restartHost() { host.restart() }
-    @objc private func openSpells() { NSWorkspace.shared.open(IncantConfig.spellsDirectory) }
+    @objc private func openSpells() { NSWorkspace.shared.open(CantripConfig.spellsDirectory) }
     @objc private func openLog() { NSWorkspace.shared.open(host.logURL) }
 }

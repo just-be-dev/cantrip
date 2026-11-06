@@ -1,4 +1,4 @@
-// ~/.config/incant/config.json
+// ~/.config/cantrip/config.json
 //
 // {
 //   "hotkey": "option+space",   // modifiers: cmd, option/alt, ctrl, shift
@@ -8,27 +8,27 @@
 import Carbon
 import Foundation
 
-struct IncantConfig: Decodable {
+struct CantripConfig: Decodable {
     var hotkey: String = "option+space"
     var bun: String?
 
     static var directory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/incant")
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/cantrip")
     }
 
     static var spellsDirectory: URL {
-        if let env = ProcessInfo.processInfo.environment["INCANT_SPELLS_DIR"] { return URL(filePath: env) }
+        if let env = ProcessInfo.processInfo.environment["CANTRIP_SPELLS_DIR"] { return URL(filePath: env) }
         return directory.appending(path: "spells")
     }
 
-    static func load() -> IncantConfig {
+    static func load() -> CantripConfig {
         let url = directory.appending(path: "config.json")
-        guard let data = try? Data(contentsOf: url) else { return IncantConfig() }
+        guard let data = try? Data(contentsOf: url) else { return CantripConfig() }
         do {
-            return try JSONDecoder().decode(IncantConfig.self, from: data)
+            return try JSONDecoder().decode(CantripConfig.self, from: data)
         } catch {
-            NSLog("Incant: ignoring invalid \(url.path): \(error)")
-            return IncantConfig()
+            NSLog("Cantrip: ignoring invalid \(url.path): \(error)")
+            return CantripConfig()
         }
     }
 

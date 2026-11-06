@@ -3,7 +3,7 @@
 import * as Effect from "effect/Effect"
 import * as ChildProcess from "effect/process/ChildProcess"
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
-import { Action, Spell, Ui } from "incant"
+import { Action, Spell, Ui } from "cantrip"
 
 const osascript = (script: string) =>
   ChildProcessSpawner.ChildProcessSpawner.use((spawner) =>

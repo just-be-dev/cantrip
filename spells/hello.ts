@@ -1,6 +1,6 @@
 // A static list with every kind of action. Swift filters the list as you type.
 import * as Effect from "effect/Effect"
-import { Action, Spell, Ui, View } from "incant"
+import { Action, Spell, Ui, View } from "cantrip"
 
 const spells = [
   { name: "Lumos", effect: "Lights the tip of the wand", icon: "lightbulb" },

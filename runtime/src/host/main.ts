@@ -1,5 +1,5 @@
 /**
- * The Incant spell host. Incant.app starts this as one long-lived process
+ * The Cantrip spell host. Cantrip.app starts this as one long-lived process
  * and talks to it over stdio (see Protocol.ts).
  */
 import * as BunRuntime from "@effect/platform-bun/BunRuntime"
@@ -12,11 +12,17 @@ import { Registry } from "./Registry.ts"
 import { Sessions } from "./Sessions.ts"
 import { Wire } from "./Wire.ts"
 
+/** Keep in sync with `engines.bun` in package.json and the pin in mise.toml. */
+const MinimumBun = "1.4.4"
+
 const Main = Layer.effectDiscard(
   Effect.gen(function*() {
     const wire = yield* Wire
     const sessions = yield* Sessions
-    yield* Effect.logInfo("Incant host ready")
+    yield* Effect.logInfo(`Cantrip host ready (bun ${Bun.version})`)
+    if (Bun.semver.order(Bun.version, MinimumBun) < 0) {
+      yield* Effect.logWarning(`bun ${Bun.version} is older than ${MinimumBun}; update bun or set "bun" in config.json`)
+    }
     // Each message is handled on its own fiber so a slow `run` never blocks input.
     yield* wire.incoming.pipe(
       Stream.runForEach((message) => Effect.forkDetach(sessions.handle(message))),

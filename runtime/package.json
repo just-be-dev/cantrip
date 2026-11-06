@@ -1,7 +1,10 @@
 {
-  "name": "incant",
+  "name": "cantrip",
   "private": true,
   "type": "module",
+  "engines": {
+    "bun": ">=1.4.4"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "prepare": "effect-tsgo patch",
@@ -11,7 +14,7 @@
     ".": "./src/sdk/index.ts"
   },
   "devDependencies": {
-    "@effect/tsgo": "^0.67.3",
+    "@effect/tsgo": "^0.67.4",
     "typescript": "7.0.2"
   },
   "dependencies": {

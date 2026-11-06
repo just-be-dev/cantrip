@@ -13,24 +13,24 @@ final class SpellHost {
     private var stdin: FileHandle?
     private var quitting = false
     private var restartDelay: TimeInterval = 0.5
-    private let config: IncantConfig
+    private let config: CantripConfig
 
-    init(config: IncantConfig) {
+    init(config: CantripConfig) {
         self.config = config
     }
 
     var logURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Incant/host.log")
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Cantrip/host.log")
     }
 
     func start() {
         guard let bun = Self.findBun(config: config) else {
-            NSLog("Incant: could not find bun. Set \"bun\" in ~/.config/incant/config.json")
-            onMessage(.error(session: "", title: "bun not found", message: "Install bun, or set \"bun\" in ~/.config/incant/config.json."))
+            NSLog("Cantrip: could not find bun. Set \"bun\" in ~/.config/cantrip/config.json")
+            onMessage(.error(session: "", title: "bun not found", message: "Install bun, or set \"bun\" in ~/.config/cantrip/config.json."))
             return
         }
         guard let entry = Self.findHostEntry() else {
-            NSLog("Incant: could not find runtime/src/host/main.ts")
+            NSLog("Cantrip: could not find runtime/src/host/main.ts")
             return
         }
 
@@ -51,7 +51,7 @@ final class SpellHost {
                 let message = try JSONDecoder().decode(HostMessage.self, from: data)
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.onMessage(message) } }
             } catch {
-                NSLog("Incant: undecodable host line: \(line.prefix(300)) (\(error))")
+                NSLog("Cantrip: undecodable host line: \(line.prefix(300)) (\(error))")
             }
         }
         output.fileHandleForReading.readabilityHandler = { handle in
@@ -67,9 +67,9 @@ final class SpellHost {
             try process.run()
             self.process = process
             self.stdin = input.fileHandleForWriting
-            NSLog("Incant: started host \(bun.path) \(entry.path) (pid \(process.processIdentifier))")
+            NSLog("Cantrip: started host \(bun.path) \(entry.path) (pid \(process.processIdentifier))")
         } catch {
-            NSLog("Incant: failed to start host: \(error)")
+            NSLog("Cantrip: failed to start host: \(error)")
         }
     }
 
@@ -78,7 +78,7 @@ final class SpellHost {
         do {
             try stdin.write(contentsOf: data + Data([0x0A]))
         } catch {
-            NSLog("Incant: write to host failed: \(error)")
+            NSLog("Cantrip: write to host failed: \(error)")
         }
     }
 
@@ -97,7 +97,7 @@ final class SpellHost {
         process = nil
         stdin = nil
         guard !quitting else { return }
-        NSLog("Incant: host exited (\(status)); restarting in \(restartDelay)s")
+        NSLog("Cantrip: host exited (\(status)); restarting in \(restartDelay)s")
         onRestart()
         let delay = restartDelay
         restartDelay = min(restartDelay * 2, 30)
@@ -125,12 +125,14 @@ final class SpellHost {
 
     // MARK: Locating bun and the runtime
 
-    static func findBun(config: IncantConfig) -> URL? {
+    static func findBun(config: CantripConfig) -> URL? {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
         var candidates: [String] = []
         if let configured = config.bun { candidates.append((configured as NSString).expandingTildeInPath) }
-        if let env = ProcessInfo.processInfo.environment["INCANT_BUN"] { candidates.append(env) }
+        if let env = ProcessInfo.processInfo.environment["CANTRIP_BUN"] { candidates.append(env) }
+        // The project's pinned bun, recorded by scripts/bundle.sh at build time.
+        if let pinned = Bundle.main.object(forInfoDictionaryKey: "CantripBun") as? String { candidates.append(pinned) }
         candidates += [
             "\(home)/.bun/bin/bun",
             "\(home)/.local/share/mise/shims/bun",
@@ -154,12 +156,12 @@ final class SpellHost {
         return path.isEmpty ? nil : URL(filePath: path)
     }
 
-    /// The host entry point: `$INCANT_RUNTIME`, the app bundle's Resources, or
+    /// The host entry point: `$CANTRIP_RUNTIME`, the app bundle's Resources, or
     /// (for `swift run` during development) a `runtime/` dir above the executable.
     static func findHostEntry() -> URL? {
         let fm = FileManager.default
         let relative = "src/host/main.ts"
-        if let env = ProcessInfo.processInfo.environment["INCANT_RUNTIME"] {
+        if let env = ProcessInfo.processInfo.environment["CANTRIP_RUNTIME"] {
             return URL(filePath: env).appending(path: relative)
         }
         if let resources = Bundle.main.resourceURL {

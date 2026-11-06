@@ -41,7 +41,7 @@ struct FooterView: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            Text("Incant")
+            Text("Cantrip")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
         }

@@ -1,27 +1,27 @@
-# Incant 🔮
+# Cantrip 🔮
 
 A command bar for macOS: press **⌥ Space**, type, hit ↵. The UI is native
 Swift (AppKit + SwiftUI). The commands, called **spells**, are
 [Effect](https://effect.website) programs that run on [Bun](https://bun.sh).
 
 ```text
-┌────────────── Incant.app (Swift) ──────────────┐        ┌──── bun host ─────┐
+┌────────────── Cantrip.app (Swift) ─────────────┐        ┌──── bun host ─────┐
 │ hotkey · panel · fuzzy search · apps · views   │ stdio  │ loads spells      │
 │ draws List / Detail natively, copy/open/HUD    │◀──────▶│ runs Effect fibers│
 └────────────────────────────────────────────────┘  JSON  └───────────────────┘
-                                                   lines   ~/.config/incant/spells/*.ts
+                                                   lines   ~/.config/cantrip/spells/*.ts
 ```
 
 ## Quick start
 
 ```sh
-mise install            # bun 1.4
+mise install            # bun 1.4.4 (pinned in mise.toml)
 mise run install        # runtime deps
 mise run dev            # run from source; the bar opens at launch
-mise run install-app    # build Incant.app → ~/Applications and launch it
+mise run install-app    # build Cantrip.app → ~/Applications and launch it
 ```
 
-On first launch Incant creates `~/.config/incant/spells/` and copies the
+On first launch Cantrip creates `~/.config/cantrip/spells/` and copies the
 examples from [`spells/`](spells) into it. Edit them or add files there, and
 they reload as soon as you save.
 
@@ -44,16 +44,16 @@ right where you left off; after that it starts fresh.
 
 ## Writing a spell
 
-A spell is a `.ts` file in `~/.config/incant/spells/`. Every exported
+A spell is a `.ts` file in `~/.config/cantrip/spells/`. Every exported
 `Spell.make(...)` becomes a command. A directory with an `index.ts` works too.
 Names starting with `_` are skipped, which is handy for shared helpers.
 
-You don't need to install anything. Incant links `incant` and `effect` into
+You don't need to install anything. Cantrip links `cantrip` and `effect` into
 `node_modules/` and writes a `tsconfig.json`, so your editor has types.
 
 ```ts
 import * as Effect from "effect/Effect"
-import { Action, Spell, Ui } from "incant"
+import { Action, Spell, Ui } from "cantrip"
 
 // No view: the bar hides at once, the spell runs, and a HUD flashes.
 export const uuid = Spell.make({
@@ -111,7 +111,7 @@ export const search = Spell.make({
   Closing the spell closes all of them.
 - **Errors show up.** A failed `run` shows the `Cause` in the bar. A failed
   action shows in the footer. A spell that fails to load is listed in a toast.
-  Logs (`console.log`, `Effect.log`) go to `~/Library/Logs/Incant/host.log`.
+  Logs (`console.log`, `Effect.log`) go to `~/Library/Logs/Cantrip/host.log`.
 
 ### Ui API
 
@@ -128,37 +128,39 @@ export const search = Spell.make({
 
 ## Config
 
-`~/.config/incant/config.json` (optional):
+`~/.config/cantrip/config.json` (optional):
 
 ```json
 { "hotkey": "option+space", "bun": "/opt/homebrew/bin/bun" }
 ```
 
 The hotkey takes `cmd`, `option`, `ctrl`, and `shift`, plus a key
-(`space`, `a`–`z`, `0`–`9`, …). Without a `bun` entry, Incant looks in
-`~/.bun/bin`, the mise shims, Homebrew, and then your login shell.
+(`space`, `a`–`z`, `0`–`9`, …). Without a `bun` entry, Cantrip uses the bun
+that `scripts/bundle.sh` found at build time (the mise pin), then `~/.bun/bin`,
+the mise shims, Homebrew, and your login shell. It needs bun ≥ 1.4.4; the host
+log warns if it's older.
 
 Environment variables, for development:
 
 | Variable | |
 |-|-|
-| `INCANT_SPELLS_DIR` | use a different spells directory |
-| `INCANT_RUNTIME` | use a different `runtime/` |
-| `INCANT_SHOW_ON_LAUNCH=1` | open the bar at launch |
-| `INCANT_KEEP_OPEN=1` | don't hide when the bar loses focus |
+| `CANTRIP_SPELLS_DIR` | use a different spells directory |
+| `CANTRIP_RUNTIME` | use a different `runtime/` |
+| `CANTRIP_SHOW_ON_LAUNCH=1` | open the bar at launch |
+| `CANTRIP_KEEP_OPEN=1` | don't hide when the bar loses focus |
 
 ## Layout
 
 ```text
-app/        Swift package: panel, hotkey, host bridge, views (Sources/Incant)
-runtime/    the `incant` package: SDK (src/sdk) and bun host (src/host)
-spells/     example spells, copied to ~/.config/incant/spells on first run
-scripts/    bundle.sh builds Incant.app
+app/        Swift package: panel, hotkey, host bridge, views (Sources/Cantrip)
+runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
+spells/     example spells, copied to ~/.config/cantrip/spells on first run
+scripts/    bundle.sh builds Cantrip.app
 ```
 
 The wire protocol is documented in
 [`runtime/src/host/Protocol.ts`](runtime/src/host/Protocol.ts) and mirrored in
-[`app/Sources/Incant/Protocol.swift`](app/Sources/Incant/Protocol.swift). You
+[`app/Sources/Cantrip/Protocol.swift`](app/Sources/Cantrip/Protocol.swift). You
 can drive the host by hand with `mise run host`:
 
 ```sh

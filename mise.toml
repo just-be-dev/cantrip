@@ -1,5 +1,5 @@
 [tools]
-bun = "1.4"
+bun = "1.4.4"
 
 [tasks.install]
 description = "Install runtime dependencies"
@@ -7,10 +7,10 @@ dir = "runtime"
 run = "bun install"
 
 [tasks.dev]
-description = "Run Incant from source and show the bar on launch (Ctrl-C to quit)"
+description = "Run Cantrip from source and show the bar on launch (Ctrl-C to quit)"
 dir = "app"
-env = { INCANT_SHOW_ON_LAUNCH = "1" }
-run = "swift run Incant"
+env = { CANTRIP_SHOW_ON_LAUNCH = "1" }
+run = "swift run Cantrip"
 
 [tasks.host]
 description = "Run the spell host alone; type protocol JSON on stdin"
@@ -25,7 +25,7 @@ run = [
 ]
 
 [tasks.build]
-description = "Build build/Incant.app"
+description = "Build build/Cantrip.app"
 run = "scripts/bundle.sh"
 
 [tasks.install-app]

@@ -1,12 +1,12 @@
 /**
  * Finds, loads, and hot-reloads spells from the spells directory.
  *
- * Layout of `~/.config/incant/spells` (or `$INCANT_SPELLS_DIR`):
+ * Layout of `~/.config/cantrip/spells` (or `$CANTRIP_SPELLS_DIR`):
  *
  *   uuid.ts            → every exported Spell becomes a command
  *   github/index.ts    → a directory spell, for spells with their own files
  *   _helpers.ts        → names starting with `_` or `.` are skipped
- *   node_modules/      → managed by Incant: links `incant` and `effect` to the host
+ *   node_modules/      → managed by Cantrip: links `cantrip` and `effect` to the host
  */
 import * as NodePath from "node:path"
 import * as Config from "effect/Config"
@@ -24,12 +24,12 @@ import { Wire } from "./Wire.ts"
 
 const runtimeDir = NodePath.resolve(import.meta.dir, "../..")
 
-export const SpellsDir = Config.String("INCANT_SPELLS_DIR").pipe(
-  Config.withDefault(`${process.env.HOME}/.config/incant/spells`),
+export const SpellsDir = Config.String("CANTRIP_SPELLS_DIR").pipe(
+  Config.withDefault(`${process.env.HOME}/.config/cantrip/spells`),
   Config.map((dir) => NodePath.resolve(dir))
 )
 /** Copied into the spells directory the first time it is created. */
-export const ExamplesDir = Config.String("INCANT_EXAMPLES_DIR").pipe(
+export const ExamplesDir = Config.String("CANTRIP_EXAMPLES_DIR").pipe(
   Config.withDefault(`${runtimeDir}/../spells`),
   Config.map((dir) => NodePath.resolve(dir))
 )
@@ -43,7 +43,7 @@ export class Registry extends Context.Service<Registry, {
   readonly get: (id: string) => Effect.Effect<LoadedSpell | undefined>
   /** Re-import every spell and send the new command list to the app. */
   readonly reload: Effect.Effect<void>
-}>()("incant/host/Registry") {
+}>()("cantrip/host/Registry") {
   static readonly layer = Layer.effect(
     Registry,
     Effect.gen(function*() {
@@ -68,12 +68,12 @@ export class Registry extends Context.Service<Registry, {
         yield* Effect.logInfo(`Created ${dir}`)
       })
 
-      /** Point `node_modules/{incant,effect}` at this host so spells need no install. */
+      /** Point `node_modules/{cantrip,effect}` at this host so spells need no install. */
       const link = Effect.fn("Registry.link")(function*() {
         const modules = path.join(dir, "node_modules")
         yield* fs.makeDirectory(modules, { recursive: true })
         const links: ReadonlyArray<readonly [string, string]> = [
-          ["incant", runtimeDir],
+          ["cantrip", runtimeDir],
           ["effect", path.join(runtimeDir, "node_modules", "effect")],
           ["@types/bun", path.join(runtimeDir, "node_modules", "@types", "bun")],
           ["bun-types", path.join(runtimeDir, "node_modules", "bun-types")]

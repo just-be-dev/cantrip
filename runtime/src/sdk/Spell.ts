@@ -3,7 +3,7 @@
  *
  * ```ts
  * import * as Effect from "effect/Effect"
- * import { Spell, Ui } from "incant"
+ * import { Spell, Ui } from "cantrip"
  *
  * export default Spell.make({
  *   title: "Generate UUID",
@@ -21,7 +21,7 @@ import type * as Effect from "effect/Effect"
 import type { SpellServices } from "./Services.ts"
 import type { Icon } from "./View.ts"
 
-export const TypeId = "~incant/Spell" as const
+export const TypeId = "~cantrip/Spell" as const
 
 export interface Spell {
   readonly [TypeId]: typeof TypeId

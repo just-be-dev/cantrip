@@ -1,5 +1,5 @@
 /**
- * Line-delimited JSON over stdio to Incant.app.
+ * Line-delimited JSON over stdio to Cantrip.app.
  */
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -12,7 +12,7 @@ export class Wire extends Context.Service<Wire, {
   readonly send: (message: Outbound) => Effect.Effect<void>
   /** Decoded app messages. Lines that don't decode are logged and skipped. */
   readonly incoming: Stream.Stream<Inbound>
-}>()("incant/host/Wire") {
+}>()("cantrip/host/Wire") {
   static readonly layer = Layer.sync(Wire, () => {
     // Keep the real stdout for the protocol. Everything that logs through
     // `console` (spells, Effect's logger) goes to stderr so it can't corrupt it.

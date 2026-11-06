@@ -23,10 +23,10 @@ final class HotKey {
             },
             1, &spec, me, &handlerRef)
         guard installed == noErr else { return nil }
-        let id = EventHotKeyID(signature: OSType(0x494E_4354), id: 1)  // 'INCT'
+        let id = EventHotKeyID(signature: OSType(0x434E_5450), id: 1)  // 'CNTP'
         let registered = RegisterEventHotKey(keyCode, modifiers, id, GetApplicationEventTarget(), 0, &hotKeyRef)
         guard registered == noErr else {
-            NSLog("Incant: RegisterEventHotKey failed (\(registered)); is the shortcut taken?")
+            NSLog("Cantrip: RegisterEventHotKey failed (\(registered)); is the shortcut taken?")
             return nil
         }
     }

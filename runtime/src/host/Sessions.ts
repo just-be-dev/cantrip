@@ -94,7 +94,7 @@ const encode = (view: View.View): { readonly wire: WireView; readonly handlers: 
 
 export class Sessions extends Context.Service<Sessions, {
   readonly handle: (message: Inbound) => Effect.Effect<void>
-}>()("incant/host/Sessions") {
+}>()("cantrip/host/Sessions") {
   static readonly layer = Layer.effect(
     Sessions,
     Effect.gen(function*() {
