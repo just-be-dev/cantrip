@@ -28,6 +28,7 @@ import * as Fiber from "effect/Fiber"
 import * as FileSystem from "effect/FileSystem"
 import * as HttpClient from "effect/http/HttpClient"
 import * as Layer from "effect/Layer"
+import * as Logger from "effect/Logger"
 import * as Option from "effect/Option"
 import * as Path from "effect/Path"
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
@@ -147,6 +148,26 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
       const platform = yield* Effect.context<
         HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
       >()
+
+      // Loggers print through the fiber's Console, which a command replaces with
+      // its terminal. Pin them to the host's Console so `Effect.log` inside a
+      // command (or the daemon code it calls) still goes to the host log.
+      const hostConsole = yield* Console.Console
+      const hostLoggers = new Set(
+        [...(yield* Logger.CurrentLoggers)].map((logger) =>
+          Logger.make((options: Logger.Options<unknown>) =>
+            logger.log({
+              ...options,
+              fiber: new Proxy(options.fiber, {
+                get: (target, key, receiver) =>
+                  key === "getRef"
+                    ? (ref: unknown) => ref === Console.Console ? hostConsole : target.getRef(ref as never)
+                    : Reflect.get(target, key, receiver)
+              })
+            })
+          )
+        )
+      )
 
       const socketPath = path.join(grimoire, ".cantrip.sock")
       const shimDir = path.join(path.dirname(grimoire), "bin")
@@ -276,7 +297,8 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
               canAnimate: false,
               canPrompt: false
             }),
-            Effect.provideService(Console.Console, makeConsole(c, canColor))
+            Effect.provideService(Console.Console, makeConsole(c, canColor)),
+            Effect.provideService(Logger.CurrentLoggers, hostLoggers)
           )
 
           const exit = yield* (
