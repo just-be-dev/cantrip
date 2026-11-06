@@ -25,6 +25,24 @@ final class CommandPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    /// Cantrip is an accessory app with no main menu, so there's no Edit menu to
+    /// turn ⌘A/⌘C/⌘V/⌘X/⌘Z into actions. Send them to the field editor ourselves.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let action: Selector? =
+            switch (mods, event.charactersIgnoringModifiers?.lowercased()) {
+            case ([.command], "a"): #selector(NSText.selectAll(_:))
+            case ([.command], "c"): #selector(NSText.copy(_:))
+            case ([.command], "v"): #selector(NSText.paste(_:))
+            case ([.command], "x"): #selector(NSText.cut(_:))
+            case ([.command], "z"): Selector(("undo:"))
+            case ([.command, .shift], "z"): Selector(("redo:"))
+            default: nil
+            }
+        if let action, NSApp.sendAction(action, to: nil, from: self) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
