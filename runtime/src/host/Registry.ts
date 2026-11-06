@@ -1,7 +1,7 @@
 /**
- * Finds, loads, and hot-reloads spells from the spells directory.
+ * Finds, loads, and hot-reloads spells from the grimoire: the folder of spells.
  *
- * Layout of `~/.config/cantrip/spells` (or `$CANTRIP_SPELLS_DIR`):
+ * Layout of `~/.config/cantrip/grimoire` (or `$CANTRIP_GRIMOIRE`):
  *
  *   uuid.ts            → every exported Spell becomes a command
  *   github/index.ts    → a directory spell, for spells with their own files
@@ -24,13 +24,13 @@ import { Wire } from "./Wire.ts"
 
 const runtimeDir = NodePath.resolve(import.meta.dir, "../..")
 
-export const SpellsDir = Config.String("CANTRIP_SPELLS_DIR").pipe(
-  Config.withDefault(`${process.env.HOME}/.config/cantrip/spells`),
+export const GrimoireDir = Config.String("CANTRIP_GRIMOIRE").pipe(
+  Config.withDefault(`${process.env.HOME}/.config/cantrip/grimoire`),
   Config.map((dir) => NodePath.resolve(dir))
 )
-/** Copied into the spells directory the first time it is created. */
+/** Copied into the grimoire the first time it is created. */
 export const ExamplesDir = Config.String("CANTRIP_EXAMPLES_DIR").pipe(
-  Config.withDefault(`${runtimeDir}/../spells`),
+  Config.withDefault(`${runtimeDir}/../grimoire`),
   Config.map((dir) => NodePath.resolve(dir))
 )
 
@@ -50,7 +50,7 @@ export class Registry extends Context.Service<Registry, {
       const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path
       const wire = yield* Wire
-      const dir = yield* SpellsDir
+      const dir = yield* GrimoireDir
       const examples = yield* ExamplesDir
 
       const spells = yield* Ref.make(new Map<string, LoadedSpell>())
@@ -58,6 +58,12 @@ export class Registry extends Context.Service<Registry, {
 
       const seed = Effect.fn("Registry.seed")(function*() {
         if (yield* fs.exists(dir)) return
+        // Before it was called the grimoire, this folder was `spells/` next to it.
+        const legacy = path.join(path.dirname(dir), "spells")
+        if (path.basename(dir) === "grimoire" && (yield* fs.exists(legacy))) {
+          yield* fs.rename(legacy, dir)
+          return yield* Effect.logInfo(`Moved ${legacy} to ${dir}`)
+        }
         yield* fs.makeDirectory(dir, { recursive: true })
         if (yield* fs.exists(examples)) {
           for (const name of yield* fs.readDirectory(examples)) {
@@ -153,7 +159,7 @@ export class Registry extends Context.Service<Registry, {
         Effect.withSpan("Registry.reload")
       )
 
-      yield* seed().pipe(Effect.catchCause((cause) => Effect.logError("Could not create spells dir", cause)))
+      yield* seed().pipe(Effect.catchCause((cause) => Effect.logError("Could not create the grimoire", cause)))
       yield* link().pipe(Effect.catchCause((cause) => Effect.logError("Could not link spell modules", cause)))
       yield* reload
 

@@ -16,9 +16,10 @@ struct CantripConfig: Decodable {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/cantrip")
     }
 
-    static var spellsDirectory: URL {
-        if let env = ProcessInfo.processInfo.environment["CANTRIP_SPELLS_DIR"] { return URL(filePath: env) }
-        return directory.appending(path: "spells")
+    /// The grimoire: the folder of spells.
+    static var grimoireDirectory: URL {
+        if let env = ProcessInfo.processInfo.environment["CANTRIP_GRIMOIRE"] { return URL(filePath: env) }
+        return directory.appending(path: "grimoire")
     }
 
     static func load() -> CantripConfig {

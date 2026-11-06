@@ -21,7 +21,7 @@ run = "bun src/host/main.ts"
 description = "Typecheck the runtime and example spells"
 run = [
   "cd runtime && bun run typecheck",
-  "cd spells && ../runtime/node_modules/.bin/tsc --noEmit -p .",
+  "cd grimoire && ../runtime/node_modules/.bin/tsc --noEmit -p .",
 ]
 
 [tasks.build]

@@ -26,7 +26,7 @@ echo "  bun: $bun_path ($("$bun_path" --version))"
 echo "→ staging runtime (production deps)"
 rsync -a --delete --exclude node_modules --exclude '*.log' "$root/runtime/" "$app/Contents/Resources/runtime/"
 (cd "$app/Contents/Resources/runtime" && "$bun_path" install --production --frozen-lockfile --ignore-scripts >/dev/null)
-rsync -a --delete --exclude node_modules "$root/spells/" "$app/Contents/Resources/spells/"
+rsync -a --delete --exclude node_modules "$root/grimoire/" "$app/Contents/Resources/grimoire/"
 
 echo "→ signing (ad hoc)"
 codesign --force --deep --sign - "$app" >/dev/null 2>&1

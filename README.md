@@ -9,7 +9,7 @@ Swift (AppKit + SwiftUI). The commands, called **spells**, are
 │ hotkey · panel · fuzzy search · apps · views   │ stdio  │ loads spells      │
 │ draws List / Detail natively, copy/open/HUD    │◀──────▶│ runs Effect fibers│
 └────────────────────────────────────────────────┘  JSON  └───────────────────┘
-                                                   lines   ~/.config/cantrip/spells/*.ts
+                                                   lines   ~/.config/cantrip/grimoire/*.ts
 ```
 
 ## Quick start
@@ -21,12 +21,13 @@ mise run dev            # run from source; the bar opens at launch
 mise run install-app    # build Cantrip.app → ~/Applications and launch it
 ```
 
-On first launch Cantrip creates `~/.config/cantrip/spells/` and copies the
-examples from [`spells/`](spells) into it. Edit them or add files there, and
+Your spells live in your **grimoire**, `~/.config/cantrip/grimoire/`. On first
+launch Cantrip creates it and copies in the examples from
+[`grimoire/`](grimoire). Edit them or add files there, and
 they reload as soon as you save.
 
 The installed app turns on **Launch at Login** the first time it runs. Toggle
-it from the 🪄 menu bar icon, which also has Reload Spells, Restart Spell
+it from the 🪄 menu bar icon, which also has Open Grimoire, Reload Spells, Restart Spell
 Host, and the log.
 
 ## Keys
@@ -45,7 +46,7 @@ right where you left off; after that it starts fresh.
 
 ## Writing a spell
 
-A spell is a `.ts` file in `~/.config/cantrip/spells/`. Every exported
+A spell is a `.ts` file in your grimoire, `~/.config/cantrip/grimoire/`. Every exported
 `Spell.make(...)` becomes a command. A directory with an `index.ts` works too.
 Names starting with `_` are skipped, which is handy for shared helpers.
 
@@ -145,7 +146,7 @@ Environment variables, for development:
 
 | Variable | |
 |-|-|
-| `CANTRIP_SPELLS_DIR` | use a different spells directory |
+| `CANTRIP_GRIMOIRE` | use a different grimoire |
 | `CANTRIP_RUNTIME` | use a different `runtime/` |
 | `CANTRIP_SHOW_ON_LAUNCH=1` | open the bar at launch |
 | `CANTRIP_KEEP_OPEN=1` | don't hide when the bar loses focus |
@@ -155,7 +156,7 @@ Environment variables, for development:
 ```text
 app/        Swift package: panel, hotkey, host bridge, views (Sources/Cantrip)
 runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
-spells/     example spells, copied to ~/.config/cantrip/spells on first run
+grimoire/   example spells, copied to ~/.config/cantrip/grimoire on first run
 scripts/    bundle.sh builds Cantrip.app
 alchemy.run.ts  an empty stack, so projects.just-be.dev deploys succeed (nothing to deploy)
 ```

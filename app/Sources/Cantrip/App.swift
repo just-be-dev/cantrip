@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Reload Spells", action: #selector(reloadSpells), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Restart Spell Host", action: #selector(restartHost), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Open Spells Folder", action: #selector(openSpells), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Open Grimoire", action: #selector(openGrimoire), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Host Log", action: #selector(openLog), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openPanel() { panel.show() }
     @objc private func reloadSpells() { store.perform(builtin: .reloadSpells) }
     @objc private func restartHost() { host.restart() }
-    @objc private func openSpells() { NSWorkspace.shared.open(CantripConfig.spellsDirectory) }
+    @objc private func openGrimoire() { NSWorkspace.shared.open(CantripConfig.grimoireDirectory) }
     @objc private func openLog() { NSWorkspace.shared.open(host.logURL) }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {

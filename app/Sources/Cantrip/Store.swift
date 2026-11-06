@@ -29,12 +29,12 @@ struct ActionItem: Identifiable {
 }
 
 enum Builtin: String, CaseIterable {
-    case reloadSpells, openSpellsFolder, openLog, quit
+    case reloadSpells, openGrimoire, openLog, quit
 
     var title: String {
         switch self {
         case .reloadSpells: "Reload Spells"
-        case .openSpellsFolder: "Open Spells Folder"
+        case .openGrimoire: "Open Grimoire"
         case .openLog: "Open Spell Host Log"
         case .quit: "Quit Cantrip"
         }
@@ -43,7 +43,7 @@ enum Builtin: String, CaseIterable {
     var icon: String {
         switch self {
         case .reloadSpells: "arrow.clockwise"
-        case .openSpellsFolder: "folder"
+        case .openGrimoire: "books.vertical"
         case .openLog: "doc.text.magnifyingglass"
         case .quit: "power"
         }
@@ -271,8 +271,8 @@ final class Store {
         case .reloadSpells:
             host.send(.reload)
             showToast(Toast(style: .info, title: "Reloading spells…", message: nil))
-        case .openSpellsFolder:
-            NSWorkspace.shared.open(CantripConfig.spellsDirectory)
+        case .openGrimoire:
+            NSWorkspace.shared.open(CantripConfig.grimoireDirectory)
             hidePanel()
         case .openLog:
             NSWorkspace.shared.open(host.logURL)

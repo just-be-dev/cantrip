@@ -1,5 +1,5 @@
 {
-  "//": "Repo-only: lets the example spells typecheck against ../runtime. Users' spell dirs get a generated tsconfig and node_modules links instead.",
+  "//": "Repo-only: lets the example spells typecheck against ../runtime. A user's grimoire gets a generated tsconfig and node_modules links instead.",
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
