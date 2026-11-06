@@ -2,7 +2,16 @@ import type * as FileSystem from "effect/FileSystem"
 import type * as HttpClient from "effect/http/HttpClient"
 import type * as Path from "effect/Path"
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
+import type * as Scope from "effect/Scope"
+import type { MenuBar } from "./MenuBar.ts"
 import type { Ui } from "./Ui.ts"
+
+/** The platform services the host provides to everything it runs. */
+export type PlatformServices =
+  | HttpClient.HttpClient
+  | FileSystem.FileSystem
+  | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
 
 /**
  * Everything the host provides to a running spell. A spell's `run` effect and
@@ -11,9 +20,11 @@ import type { Ui } from "./Ui.ts"
  * stdout is reserved for the app protocol, so `Stdio` and `Terminal` are not
  * offered. `console.log` and `Effect.log` go to the host log instead.
  */
-export type SpellServices =
-  | Ui
-  | HttpClient.HttpClient
-  | FileSystem.FileSystem
-  | Path.Path
-  | ChildProcessSpawner.ChildProcessSpawner
+export type SpellServices = Ui | PlatformServices
+
+/**
+ * Everything the host provides to a running daemon and its menu actions.
+ * Daemons have no bar view, so they get `MenuBar` instead of `Ui`. `Scope`
+ * is the daemon's own: finalizers added with it run when the daemon stops.
+ */
+export type DaemonServices = MenuBar | Scope.Scope | PlatformServices

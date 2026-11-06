@@ -21,6 +21,7 @@ struct ActionItem: Identifiable {
         case revealInFinder(String)
         case copyText(String)
         case builtin(Builtin)
+        case daemonMenu(daemon: String, item: WireMenuItem)
     }
     let id: String
     let title: String
@@ -29,15 +30,15 @@ struct ActionItem: Identifiable {
 }
 
 enum Builtin: String, CaseIterable {
-    case reloadGrimoire, restartDaemon, openGrimoire, openJournal, quit
+    case reloadGrimoire, restartHost, openGrimoire, openJournal, quit
 
     /// What it actually does, for tooltips and the bar's subtitle.
     var detail: String {
         switch self {
         case .reloadGrimoire: "Load new and changed spells (saving a file does this too)"
-        case .restartDaemon: "Restart the background process that runs spells; stops any running spell"
+        case .restartHost: "Restart the background process that runs spells and daemons; stops any running spell"
         case .openGrimoire: "Your spells folder"
-        case .openJournal: "The daemon's log"
+        case .openJournal: "The host's log"
         case .quit: "Close Cantrip"
         }
     }
@@ -45,7 +46,7 @@ enum Builtin: String, CaseIterable {
     var title: String {
         switch self {
         case .reloadGrimoire: "Reload Grimoire"
-        case .restartDaemon: "Restart Daemon"
+        case .restartHost: "Restart Host"
         case .openGrimoire: "Open Grimoire"
         case .openJournal: "Open Journal"
         case .quit: "Quit Cantrip"
@@ -55,7 +56,7 @@ enum Builtin: String, CaseIterable {
     var icon: String {
         switch self {
         case .reloadGrimoire: "arrow.clockwise"
-        case .restartDaemon: "arrow.triangle.2.circlepath"
+        case .restartHost: "arrow.triangle.2.circlepath"
         case .openGrimoire: "books.vertical"
         case .openJournal: "scroll"
         case .quit: "power"
@@ -100,13 +101,15 @@ final class Store {
     var commands: [WireCommand] = []
     var loadErrors: [String] = []
     var apps: [AppEntry] = []
+    /// Each running daemon's menu bar item, by daemon id. Its menu actions are searchable too.
+    var daemons: [String: WireStatusItem] = [:]
     var session: Session?
     var actionsOpen = false
     var actionsSelection = 0
     var toast: Toast?
     /// Bumped to ask the search field to take focus.
     var focusToken = 0
-    /// Set by Reload Grimoire / Restart Daemon; the next spell list reports back and clears it.
+    /// Set by Reload Grimoire / Restart Host; the next spell list reports back and clears it.
     @ObservationIgnored var reloadRequested = false
 
     private var rootQuery = ""
@@ -117,6 +120,7 @@ final class Store {
 
     @ObservationIgnored let host: SpellHost
     @ObservationIgnored var hidePanel: () -> Void = {}
+    @ObservationIgnored var daemonBar: DaemonBar?
     @ObservationIgnored var showHUD: (String) -> Void = { _ in }
 
     init(host: SpellHost) {
@@ -218,6 +222,17 @@ final class Store {
                 ])
             candidates.append((row, [app.name], usage[row.id] ?? 0))
         }
+        for (daemon, status) in daemons.sorted(by: { $0.key < $1.key }) {
+            for (path, item) in Self.menuActions(status.menu) {
+                let title = path.joined(separator: " › ")
+                let row = Row(
+                    id: "daemon:\(daemon):\(title)", title: title, subtitle: item.subtitle,
+                    icon: Icon(item.icon ?? status.daemonIcon ?? status.icon.imageName ?? "sparkle"),
+                    accessories: (item.checked ? ["✓"] : []) + [status.title],
+                    actions: [ActionItem(id: "choose", title: item.title, icon: item.icon, kind: .daemonMenu(daemon: daemon, item: item))])
+                candidates.append((row, [title, status.title, item.subtitle ?? ""], usage[row.id] ?? 0))
+            }
+        }
         for builtin in Builtin.allCases {
             let row = Row(
                 id: "builtin:\(builtin.rawValue)", title: builtin.title, subtitle: builtin.detail, icon: Icon(builtin.icon),
@@ -262,6 +277,27 @@ final class Store {
             perform(builtin: builtin)
         case let .wire(wire):
             perform(wire: wire)
+        case let .daemonMenu(daemon, item):
+            bumpUsage(selectedRow?.id ?? "")
+            switch item.action {
+            case .callback:
+                host.send(.menu(daemon: daemon, item: item.id))
+                hidePanel()
+            case .copy: copy(item.value ?? "")
+            case .open:
+                open(item.value ?? "")
+                hidePanel()
+            case .none: break
+            }
+        }
+    }
+
+    /// Every enabled, choosable item in a daemon's menu, with its path of titles.
+    static func menuActions(_ entries: [WireMenuEntry], path: [String] = []) -> [([String], WireMenuItem)] {
+        entries.flatMap { entry -> [([String], WireMenuItem)] in
+            guard case let .item(item) = entry, item.enabled else { return [] }
+            let here = path + [item.title]
+            return (item.action == .none ? [] : [(here, item)]) + menuActions(item.submenu, path: here)
         }
     }
 
@@ -287,11 +323,11 @@ final class Store {
             reloadRequested = true
             host.send(.reload)
             showToast(Toast(style: .info, title: "Reloading grimoire…", message: nil))
-        case .restartDaemon:
+        case .restartHost:
             endSession()
             reloadRequested = true
             host.restart()
-            showToast(Toast(style: .info, title: "Restarting daemon…", message: nil))
+            showToast(Toast(style: .info, title: "Restarting host…", message: nil))
         case .openGrimoire:
             NSWorkspace.shared.open(CantripConfig.grimoireDirectory)
             hidePanel()
@@ -342,7 +378,7 @@ final class Store {
         rootSelection = 0
     }
 
-    private func copy(_ text: String) {
+    func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         hidePanel()

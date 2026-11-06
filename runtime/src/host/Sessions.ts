@@ -23,6 +23,9 @@ import type { Inbound, WireAction, WireView } from "./Protocol.ts"
 import { Registry } from "./Registry.ts"
 import { Wire } from "./Wire.ts"
 
+/** Everything the app sends except daemon menu events, which go to `Daemons`. */
+export type SessionMessage = Exclude<Inbound, { readonly type: "menu" | "menuOpened" }>
+
 interface Frame {
   readonly scope: Scope.Closeable
   readonly query: SubscriptionRef.SubscriptionRef<string>
@@ -93,7 +96,7 @@ const encode = (view: View.View): { readonly wire: WireView; readonly handlers: 
 }
 
 export class Sessions extends Context.Service<Sessions, {
-  readonly handle: (message: Inbound) => Effect.Effect<void>
+  readonly handle: (message: SessionMessage) => Effect.Effect<void>
 }>()("cantrip/host/Sessions") {
   static readonly layer = Layer.effect(
     Sessions,
@@ -243,7 +246,7 @@ export class Sessions extends Context.Service<Sessions, {
           return session ? f(session) : Effect.void
         })
 
-      const handle = (message: Inbound): Effect.Effect<void> => {
+      const handle = (message: SessionMessage): Effect.Effect<void> => {
         switch (message.type) {
           case "run":
             return run(message.session, message.command)

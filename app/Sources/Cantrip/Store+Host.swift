@@ -50,6 +50,12 @@ extension Store {
                 session = nil
                 hidePanel()
             }
+        case let .status(daemon, item):
+            daemons[daemon] = item
+            daemonBar?.update(daemon, item)
+        case let .statusRemoved(daemon):
+            daemons.removeValue(forKey: daemon)
+            daemonBar?.remove(daemon)
         case let .error(id, title, message):
             if let session, session.id == id {
                 session.error = (title, message)
@@ -63,9 +69,11 @@ extension Store {
 
     /// The host restarted: every session it knew about is gone.
     func hostRestarted() {
+        daemons.removeAll()
+        daemonBar?.removeAll()
         if session != nil, !reloadRequested {
             session = nil
-            showToast(Toast(style: .failure, title: "Daemon restarted", message: "The running spell stopped."))
+            showToast(Toast(style: .failure, title: "Host restarted", message: "The running spell stopped."))
         }
     }
 }

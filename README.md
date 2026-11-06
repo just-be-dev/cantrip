@@ -32,9 +32,9 @@ it from the 🪄 menu bar icon. The menu also has:
 | Item | Does |
 |-|-|
 | Open Grimoire | opens your spells folder |
-| Open Journal | opens the daemon's log |
+| Open Journal | opens the host's log |
 | Reload Grimoire (⌘R) | loads new and changed spells (saving a file does this too) |
-| Restart Daemon | restarts the background bun process that runs spells, which stops any running spell |
+| Restart Host | restarts the background bun process that runs spells and daemons; stops any running spell and restarts every daemon |
 
 The bar's search finds the same commands.
 
@@ -136,6 +136,69 @@ export const search = Spell.make({
 | `Ui.hud(text)` / `Ui.hide` | hide the bar (and flash a message) |
 | `Ui.copy(text)` / `Ui.open(urlOrPath)` | clipboard / default handler |
 
+## Daemons
+
+A **daemon** is a spell that stays running and puts an item in the menu bar,
+for things you want to see at a glance or that need to keep going while the
+bar is closed. Export `Daemon.summon(...)` from any grimoire file, next to or
+instead of spells.
+
+```ts
+import * as Effect from "effect/Effect"
+import { Daemon, MenuBar } from "cantrip"
+
+export const battery = Daemon.summon({
+  title: "Battery",
+  icon: "battery.100",
+  run: Effect.gen(function*() {
+    yield* Effect.addFinalizer(() => Effect.log("stopped"))  // runs when the daemon stops
+    while (true) {
+      const level = 0.62  // read it however you like
+      yield* MenuBar.render({
+        icon: MenuBar.ring(level, { tone: level < 0.2 ? "critical" : "normal" }),
+        title: `${Math.round(level * 100)}%`,
+        menu: [
+          MenuBar.header("Battery"),
+          MenuBar.item("Charge", { progress: level, accessory: "62%", subtitle: "2h 10m left" }),
+          MenuBar.separator,
+          MenuBar.item("Refresh", { key: "r", onSelect: Effect.log("refresh") })
+        ]
+      })
+      yield* Effect.sleep("1 minute")
+    }
+  })
+})
+```
+
+- **Lifetime.** A daemon starts with the host and runs until Cantrip quits
+  or crashes, Restart Host, or its file changes. Each of these closes its
+  scope, so finalizers run first. Saving a file restarts only the daemons in
+  that file (or that directory spell); the rest keep running. If the new
+  version fails to load, the old one keeps running.
+- **The item.** `MenuBar.render` shows or updates it, and Swift draws it
+  natively. The icon is an `Icon` string or `MenuBar.ring(value, { tone, busy,
+  pulse, badge })`, a ring that animates between values. `title` is short text
+  next to the icon.
+- **The menu.** `MenuBar.item(title, options)` takes `subtitle`, `icon`,
+  `checked`, `disabled`, `key` (⌘-shortcut), `submenu`, and one of
+  `onSelect` (an effect run in the daemon), `copy`, or `open`. With
+  `progress` (0–1) and `accessory` it becomes a gauge row instead.
+  `MenuBar.opened` is a stream that emits each time the user opens the menu.
+- **Searchable.** Every item you can choose in the menu also shows up in the
+  bar's search, titled by its menu path ("Keep Awake › 1 Hour").
+- **Errors.** If `run` fails, the item turns into a warning with the error and
+  a Restart item.
+- **Services.** `MenuBar`, `Scope` (the daemon's own), and the platform
+  services spells get (`HttpClient`, `FileSystem`, `Path`,
+  `ChildProcessSpawner`). There's no `Ui`; use `MenuBar.hud` and
+  `MenuBar.open`.
+
+Two real ones ship in [`grimoire/`](grimoire): **claude-usage.ts** (what's left
+of your Claude plan limits, as a ring) and **insomnia/** (keeps the Mac awake
+with the lid closed; see the comment at the top of `index.ts` for the one-time
+sudoers rule). The grimoire is only seeded on first launch, so copy them into
+`~/.config/cantrip/grimoire` to use them.
+
 ## Config
 
 `~/.config/cantrip/config.json` (optional):
@@ -164,7 +227,7 @@ Environment variables, for development:
 ```text
 app/        Swift package: panel, hotkey, host bridge, views (Sources/Cantrip)
 runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
-grimoire/   example spells, copied to ~/.config/cantrip/grimoire on first run
+grimoire/   example spells and daemons, copied to ~/.config/cantrip/grimoire on first run
 scripts/    bundle.sh builds Cantrip.app
 alchemy.run.ts  an empty stack, so projects.just-be.dev deploys succeed (nothing to deploy)
 ```

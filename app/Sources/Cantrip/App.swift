@@ -27,6 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host = SpellHost(config: config)
         store = Store(host: host)
         panel = PanelController(store: store)
+        store.daemonBar = DaemonBar(host: host) { [weak self] choice in
+            switch choice {
+            case let .copy(text): self?.store.copy(text)
+            case let .open(target): self?.store.open(target)
+            }
+        }
 
         host.onMessage = { [weak self] message in self?.store.receive(message) }
         host.onRestart = { [weak self] in self?.store.hostRestarted() }
@@ -80,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addItem(menu, .openJournal, #selector(openJournal))
         menu.addItem(.separator())
         addItem(menu, .reloadGrimoire, #selector(reloadGrimoire), "r")
-        addItem(menu, .restartDaemon, #selector(restartDaemon))
+        addItem(menu, .restartHost, #selector(restartHost))
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
         login.target = self
@@ -102,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openPanel() { panel.show() }
     @objc private func reloadGrimoire() { store.perform(builtin: .reloadGrimoire) }
-    @objc private func restartDaemon() { store.perform(builtin: .restartDaemon) }
+    @objc private func restartHost() { store.perform(builtin: .restartHost) }
     @objc private func openGrimoire() { NSWorkspace.shared.open(CantripConfig.grimoireDirectory) }
     @objc private func openJournal() { NSWorkspace.shared.open(host.logURL) }
 

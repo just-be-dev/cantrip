@@ -27,8 +27,14 @@ export const InvokeAction = Schema.Struct({
 export const Pop = Schema.Struct({ type: Schema.tag("pop"), session: Schema.String, depth: Schema.Int })
 export const Close = Schema.Struct({ type: Schema.tag("close"), session: Schema.String })
 export const Reload = Schema.Struct({ type: Schema.tag("reload") })
+/** The user chose `item` (a `WireMenuItem.id`) in a daemon's menu, or from the bar's search. */
+export const MenuSelect = Schema.Struct({ type: Schema.tag("menu"), daemon: Schema.String, item: Schema.String })
+/** The user opened a daemon's menu. */
+export const MenuOpened = Schema.Struct({ type: Schema.tag("menuOpened"), daemon: Schema.String })
 
-export const Inbound = Schema.Union([Run, Query, InvokeAction, Pop, Close, Reload]).pipe(Schema.toTaggedUnion("type"))
+export const Inbound = Schema.Union([Run, Query, InvokeAction, Pop, Close, Reload, MenuSelect, MenuOpened]).pipe(
+  Schema.toTaggedUnion("type")
+)
 export type Inbound = typeof Inbound.Type
 
 export const InboundLine = Schema.fromJsonString(Inbound)
@@ -78,6 +84,55 @@ export type WireView =
     readonly actions: ReadonlyArray<WireAction>
   }
 
+export type WireTone = "normal" | "warning" | "critical"
+
+export type WireBarIcon =
+  /** An `Icon` string: SF Symbol, emoji, or file path. */
+  | { readonly kind: "image"; readonly value: string }
+  /** `value` is 0–1, or null for "no data" (dashed). Swift animates between values. */
+  | {
+    readonly kind: "ring"
+    readonly value: number | null
+    readonly tone: WireTone
+    readonly busy: boolean
+    readonly pulse: boolean
+    readonly badge: boolean
+  }
+
+export type WireMenuEntry =
+  | { readonly kind: "separator" }
+  | { readonly kind: "header"; readonly title: string }
+  | {
+    readonly kind: "item"
+    /** Unique within the daemon's current menu; sent back in `menu`. */
+    readonly id: string
+    readonly title: string
+    readonly subtitle?: string | undefined
+    readonly icon?: string | undefined
+    readonly accessory?: string | undefined
+    /** 0–1. Makes the row a gauge (not clickable). */
+    readonly progress?: number | undefined
+    readonly tone: WireTone
+    readonly checked: boolean
+    readonly enabled: boolean
+    readonly key?: string | undefined
+    /** `callback` sends `menu` back; `copy` and `open` are handled by the app using `value`. */
+    readonly action: "none" | "callback" | "copy" | "open"
+    readonly value?: string | undefined
+    readonly submenu: ReadonlyArray<WireMenuEntry>
+  }
+
+export interface WireStatusItem {
+  /** The daemon's title and icon, for listing its menu actions in the bar's search. */
+  readonly title: string
+  readonly daemonIcon?: string | undefined
+  readonly icon: WireBarIcon
+  /** Text next to the icon. */
+  readonly label?: string | undefined
+  readonly tooltip?: string | undefined
+  readonly menu: ReadonlyArray<WireMenuEntry>
+}
+
 export type Outbound =
   | { readonly type: "commands"; readonly commands: ReadonlyArray<WireCommand>; readonly errors: ReadonlyArray<string> }
   /**
@@ -104,3 +159,7 @@ export type Outbound =
   /** The session ended on its own. `rendered: false` means it never showed a view. */
   | { readonly type: "done"; readonly session: string; readonly rendered: boolean }
   | { readonly type: "error"; readonly session: string; readonly title: string; readonly message: string }
+  /** Show or update `daemon`'s menu bar item. */
+  | { readonly type: "status"; readonly daemon: string; readonly item: WireStatusItem }
+  /** Take `daemon`'s menu bar item away. */
+  | { readonly type: "statusRemoved"; readonly daemon: string }

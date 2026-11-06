@@ -18,11 +18,21 @@ export class Wire extends Context.Service<Wire, {
     // `console` (spells, Effect's logger) goes to stderr so it can't corrupt it.
     const stdout = process.stdout
     redirectConsoleToStderr()
+    // When the app quits it closes our stdout while daemons are still shutting
+    // down. An unhandled EPIPE would kill the process before their finalizers
+    // finish (Insomnia's restores sleep), so drop writes once the pipe is gone.
+    let closed = false
+    stdout.on("error", () => {
+      closed = true
+    })
 
     const decode = Schema.decodeUnknownEffect(InboundLine)
 
     return Wire.of({
-      send: (message) => Effect.sync(() => void stdout.write(`${JSON.stringify(message)}\n`)),
+      send: (message) =>
+        Effect.sync(() => {
+          if (!closed) stdout.write(`${JSON.stringify(message)}\n`)
+        }),
       incoming: Stream.fromReadableStream({
         evaluate: () => Bun.stdin.stream(),
         onError: (cause) => cause

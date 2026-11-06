@@ -7,6 +7,8 @@ macOS command bar. Swift app (`app/`) + bun spell host (`runtime/`) talking JSON
 - The protocol lives in two places: `runtime/src/host/Protocol.ts` and `app/Sources/Cantrip/Protocol.swift`. Change both together.
 - The host's stdout is the protocol. Never write to it except through `Wire.send`; `console.*` is redirected to stderr (the host log).
 - Every view in a session is a frame with its own Scope, query, and action handlers. A `Ui` is bound to one frame (depth). Keep it that way — `render` must never target "whatever is on top".
+- Daemons (`runtime/src/host/Daemons.ts`) are host-owned, not session-owned: one Scope each, forked from the host's. Every way the host ends (stdin EOF, SIGTERM) must close that scope so finalizers run. Insomnia's finalizer is what turns sleep back on. Never `process.exit` before the layer scope has closed.
+- Reload only re-imports entries whose files changed, and keeps the previous module if the new one fails to load. A daemon whose exported object is unchanged keeps running. Don't make a reload restart daemons wholesale.
 - Spells import `cantrip` and `effect/*`; the host symlinks both into the grimoire's `node_modules`. Don't make spells install packages.
 - `Bun.resolveSync` before dynamic `import()` in the Registry works around a Bun 1.3.14 resolver bug with newly created files. Keep it.
 
