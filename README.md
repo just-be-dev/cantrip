@@ -157,6 +157,7 @@ app/        Swift package: panel, hotkey, host bridge, views (Sources/Cantrip)
 runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
 spells/     example spells, copied to ~/.config/cantrip/spells on first run
 scripts/    bundle.sh builds Cantrip.app
+alchemy.run.ts  an empty stack, so projects.just-be.dev deploys succeed (nothing to deploy)
 ```
 
 The wire protocol is documented in

@@ -1,0 +1,12 @@
+{
+  "name": "cantrip-stack",
+  "private": true,
+  "type": "module",
+  "//": "Only for projects.just-be.dev deploys (alchemy.run.ts). The spell runtime is in runtime/.",
+  "dependencies": {
+    "@effect/platform-bun": "^4.1.2",
+    "@effect/platform-node": "^4.1.2",
+    "alchemy": "2.0.0-beta.85",
+    "effect": "^4.1.2"
+  }
+}

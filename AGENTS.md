@@ -12,6 +12,8 @@ macOS command bar. Swift app (`app/`) + bun spell host (`runtime/`) talking JSON
 
 - bun is pinned to 1.4.4 in `mise.toml`, `engines.bun` in `runtime/package.json`, and `MinimumBun` in `runtime/src/host/main.ts`. Bump all three together. Use `mise exec -- bun …` if your PATH has an older bun.
 
+- The repo lives on projects.just-be.dev (`origin`), mirrored to github.com/just-be-dev/cantrip. Every push to `main` runs a deploy; the root `package.json` + `alchemy.run.ts` are an empty Alchemy stack so those succeed. Don't add resources to it unless Cantrip grows something to host.
+
 ## Effect
 
 Effect 4 (stable, `effect@^4.1`). Bare-module imports: `import * as Effect from "effect/Effect"`.
