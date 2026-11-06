@@ -6,8 +6,11 @@
  */
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
+import * as Data from "effect/Data"
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
 import * as FileSystem from "effect/FileSystem"
 import * as HttpClient from "effect/http/HttpClient"
 import * as Layer from "effect/Layer"
@@ -32,7 +35,14 @@ interface Running {
   readonly opened: PubSub.PubSub<void>
   handlers: ReadonlyMap<string, Handler>
   shown: boolean
+  /** What the daemon's `layer` built; provided to `run`, menu actions, and its CLI command. */
+  context: Context.Context<never>
+  /** Settles once `layer` is built (or fails to build). Commands wait for it. */
+  readonly ready: Deferred.Deferred<void, unknown>
 }
+
+/** A daemon's CLI command ran while the daemon wasn't running. */
+export class DaemonUnavailable extends Data.TaggedError("DaemonUnavailable")<{ readonly message: string }> {}
 
 const logPath = `${process.env.HOME}/Library/Logs/Cantrip/host.log`
 
@@ -117,6 +127,11 @@ const encode = (
 
 export class Daemons extends Context.Service<Daemons, {
   readonly handle: (message: Extract<Inbound, { readonly type: "menu" | "menuOpened" }>) => Effect.Effect<void>
+  /**
+   * Run `effect` inside the running daemon `id`, with everything its `run`
+   * gets. It's interrupted if the daemon stops, and vice versa.
+   */
+  readonly runIn: <A, E>(id: string, effect: Effect.Effect<A, E, any>) => Effect.Effect<A, E | DaemonUnavailable>
 }>()("cantrip/host/Daemons") {
   static readonly layer = Layer.effect(
     Daemons,
@@ -161,12 +176,20 @@ export class Daemons extends Context.Service<Daemons, {
               onFailure(cause)
             )
           ),
-          Effect.provideService(MenuBar.MenuBar, menuBarFor(r)),
-          Effect.provideService(Scope.Scope, r.scope),
-          Effect.provideContext(platform),
+          provideDaemon(r),
           Effect.forkIn(r.scope),
           Effect.asVoid
         )
+
+      /** Everything a daemon's effects can use: platform, MenuBar, its Scope, and what its layer built. */
+      const provideDaemon = (r: Running) => <A, E>(effect: Effect.Effect<A, E, any>): Effect.Effect<A, E> =>
+        effect.pipe(
+          // Read when it runs: the layer may finish building after this is set up.
+          (self) => Effect.suspend(() => Effect.provideContext(self, r.context)),
+          Effect.provideService(MenuBar.MenuBar, menuBarFor(r)),
+          Effect.provideService(Scope.Scope, r.scope),
+          Effect.provideContext(platform)
+        ) as Effect.Effect<A, E>
 
       /** A daemon whose `run` failed keeps its item, showing the error and a way to restart it. */
       const showFailure = (r: Running, cause: Cause.Cause<unknown>) =>
@@ -189,7 +212,9 @@ export class Daemons extends Context.Service<Daemons, {
             scope: yield* Scope.fork(hostScope),
             opened: yield* PubSub.unbounded<void>(),
             handlers: new Map(),
-            shown: false
+            shown: false,
+            context: Context.empty(),
+            ready: yield* Deferred.make<void, unknown>()
           }
           running.set(loaded.id, r)
           yield* Effect.logInfo(`Starting daemon ${loaded.id}`)
@@ -203,7 +228,14 @@ export class Daemons extends Context.Service<Daemons, {
             ),
             () => Effect.void
           )
-          yield* fork(r, `Daemon ${loaded.daemon.title}`, loaded.daemon.run, (cause) => showFailure(r, cause))
+          const { layer, run } = loaded.daemon
+          const main = Effect.gen(function*() {
+            // The layer's outputs are erased here; `Daemon.summon` checked them.
+            if (layer) r.context = (yield* Layer.buildWithScope(layer, r.scope)) as Context.Context<never>
+            yield* Deferred.succeed(r.ready, undefined)
+            yield* Effect.provideContext(run, r.context)
+          }).pipe(Effect.onError((cause) => Deferred.failCause(r.ready, cause)))
+          yield* fork(r, `Daemon ${loaded.daemon.title}`, main, (cause) => showFailure(r, cause))
         })
 
       /** `replaced`: a new instance starts right after, so keep the item (and its place in the menu bar). */
@@ -261,7 +293,21 @@ export class Daemons extends Context.Service<Daemons, {
             wire.send({ type: "hud", message: `⚠︎ ${r.loaded.daemon.title}: action failed` }))
         })
 
-      return Daemons.of({ handle })
+      const runIn = <A, E>(id: string, effect: Effect.Effect<A, E, any>) =>
+        Effect.gen(function*() {
+          const r = running.get(id)
+          if (!r) return yield* new DaemonUnavailable({ message: `${id} isn't running` })
+          const title = r.loaded.daemon.title
+          yield* Deferred.await(r.ready).pipe(
+            Effect.timeout("15 seconds"),
+            Effect.mapError(() => new DaemonUnavailable({ message: `${title} didn't start (see Open Journal)` }))
+          )
+          if (!live(r)) return yield* new DaemonUnavailable({ message: `${title} stopped` })
+          const fiber = yield* effect.pipe(provideDaemon(r), Effect.forkIn(r.scope))
+          return yield* Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)))
+        })
+
+      return Daemons.of({ handle, runIn })
     })
   )
 }

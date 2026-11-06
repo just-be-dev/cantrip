@@ -3,6 +3,8 @@ import type * as HttpClient from "effect/http/HttpClient"
 import type * as Path from "effect/Path"
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
 import type * as Scope from "effect/Scope"
+import type * as Stdio from "effect/Stdio"
+import type * as Terminal from "effect/Terminal"
 import type { MenuBar } from "./MenuBar.ts"
 import type { Ui } from "./Ui.ts"
 
@@ -28,3 +30,11 @@ export type SpellServices = Ui | PlatformServices
  * is the daemon's own: finalizers added with it run when the daemon stops.
  */
 export type DaemonServices = MenuBar | Scope.Scope | PlatformServices
+
+/**
+ * What a CLI command's handlers get (see `Spell.command` / `Daemon.command`).
+ * `Stdio`, `Terminal`, and `Console` are wired to the terminal that ran the
+ * command, so `Console.log` prints there. A daemon's commands also get
+ * `DaemonServices` and whatever its `layer` provides.
+ */
+export type CommandServices = PlatformServices | Stdio.Stdio | Terminal.Terminal

@@ -17,8 +17,9 @@
  * })
  * ```
  */
+import type * as Command from "effect/cli/Command"
 import type * as Effect from "effect/Effect"
-import type { SpellServices } from "./Services.ts"
+import type { CommandServices, SpellServices } from "./Services.ts"
 import type { Icon } from "./View.ts"
 
 export const TypeId = "~cantrip/Spell" as const
@@ -35,6 +36,17 @@ export interface Spell {
    */
   readonly mode?: "view" | "no-view" | undefined
   readonly run: Effect.Effect<unknown, unknown, SpellServices>
+  /**
+   * A CLI command (`effect/cli`) to go with the spell. Cantrip links it into
+   * `~/.local/bin` under the command's name, and running it there runs the
+   * handler in the host, printing to your terminal:
+   *
+   * ```ts
+   * command: Command.make("uuid", { count: Flag.integer("count").pipe(Flag.withDefault(1)) }, ({ count }) =>
+   *   Effect.forEach(Array.from({ length: count }), () => Console.log(crypto.randomUUID())))
+   * ```
+   */
+  readonly command?: Command.Command<any, any, any, unknown, CommandServices> | undefined
 }
 
 export const make = (spell: Omit<Spell, typeof TypeId>): Spell => ({ [TypeId]: TypeId, ...spell })

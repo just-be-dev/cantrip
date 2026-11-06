@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer"
 import * as Stream from "effect/Stream"
 import * as SubscriptionRef from "effect/SubscriptionRef"
 import { Daemon, MenuBar } from "cantrip"
+import { insomniaCommand } from "./cli.ts"
 import { type Actions, errorTitle, icons, type Notice, statusItem } from "./menu.ts"
 import { batteryMonitorLayer, sleepControlLayer } from "./pmset.ts"
 import { privilegeInstallerLayer } from "./privileges.ts"
@@ -25,7 +26,7 @@ const renderInterval = "15 seconds"
 
 const macosLayer = Layer.mergeAll(sleepControlLayer, batteryMonitorLayer, fileStateStoreLayer, privilegeInstallerLayer)
 
-/** The session's lifetime is this layer's scope, so its finalizer runs when the daemon stops. */
+/** The session's lifetime is the daemon's scope, so its finalizer runs when the daemon stops. */
 const insomniaLayer = SessionManager.layer.pipe(Layer.provideMerge(macosLayer))
 
 interface ShownNotice {
@@ -106,5 +107,8 @@ const program = Effect.gen(function*() {
 export default Daemon.summon({
   title: "Insomnia",
   icon: icons.idle,
-  run: program.pipe(Effect.scoped, Effect.provide(insomniaLayer))
+  // Built once in the daemon's scope and shared by the menu and the `insomnia` command.
+  layer: insomniaLayer,
+  run: program,
+  command: insomniaCommand
 })

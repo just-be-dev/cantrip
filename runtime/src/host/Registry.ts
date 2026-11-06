@@ -9,6 +9,7 @@
  *   node_modules/      → managed by Cantrip: links `cantrip` and `effect` to the host
  */
 import * as NodePath from "node:path"
+import type * as CliCommand from "effect/cli/Command"
 import * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Duration from "effect/Duration"
@@ -26,7 +27,7 @@ import * as Spell from "../sdk/Spell.ts"
 import type { WireCommand } from "./Protocol.ts"
 import { Wire } from "./Wire.ts"
 
-const runtimeDir = NodePath.resolve(import.meta.dir, "../..")
+export const runtimeDir = NodePath.resolve(import.meta.dir, "../..")
 
 export const GrimoireDir = Config.String("CANTRIP_GRIMOIRE").pipe(
   Config.withDefault(`${process.env.HOME}/.config/cantrip/grimoire`),
@@ -43,6 +44,17 @@ export interface LoadedSpell {
   readonly spell: Spell.Spell
 }
 
+/** A CLI command a spell or daemon brings along, by its command name. */
+export interface LoadedCommand {
+  readonly name: string
+  /** The spell or daemon id it belongs to. */
+  readonly owner: { readonly kind: "spell" | "daemon"; readonly id: string; readonly title: string }
+  readonly command: CliCommand.Command<any, any, any, unknown, any>
+}
+
+/** Command names become file names in `~/.local/bin`, so keep them tame. */
+const commandName = /^[a-z0-9][a-z0-9._-]*$/
+
 export interface LoadedDaemon {
   readonly id: string
   readonly daemon: Daemon.Daemon
@@ -58,6 +70,8 @@ export class Registry extends Context.Service<Registry, {
    * is the same object as before, so the host can leave it running.
    */
   readonly daemons: SubscriptionRef.SubscriptionRef<ReadonlyMap<string, LoadedDaemon>>
+  /** CLI commands declared by the loaded spells and daemons, by command name. */
+  readonly commands: SubscriptionRef.SubscriptionRef<ReadonlyMap<string, LoadedCommand>>
   /** Re-import changed spells and send the new command list to the app. */
   readonly reload: Effect.Effect<void>
 }>()("cantrip/host/Registry") {
@@ -72,6 +86,7 @@ export class Registry extends Context.Service<Registry, {
 
       const spells = yield* Ref.make(new Map<string, LoadedSpell>())
       const daemons = yield* SubscriptionRef.make<ReadonlyMap<string, LoadedDaemon>>(new Map())
+      const commands = yield* SubscriptionRef.make<ReadonlyMap<string, LoadedCommand>>(new Map())
       const lock = yield* Semaphore.make(1)
       let generation = 0
 
@@ -233,9 +248,23 @@ export class Registry extends Context.Service<Registry, {
             else if (Daemon.isDaemon(value)) nextDaemons.set(id, { id, daemon: value })
           }
         }
+        const nextCommands = new Map<string, LoadedCommand>()
+        const addCommand = (owner: LoadedCommand["owner"], command: LoadedCommand["command"] | undefined) => {
+          if (!command) return
+          const name = command.name
+          const taken = nextCommands.get(name)
+          if (!commandName.test(name)) errors.push(`${owner.id}: command name "${name}" must be lowercase letters, digits, ., _, or -`)
+          else if (name === "cantrip") errors.push(`${owner.id}: "cantrip" is reserved for Cantrip's own command`)
+          else if (taken) errors.push(`${owner.id}: command "${name}" is already defined by ${taken.owner.id}`)
+          else nextCommands.set(name, { name, owner, command })
+        }
+        for (const { id, spell } of nextSpells.values()) addCommand({ kind: "spell", id, title: spell.title }, spell.command)
+        for (const { id, daemon } of nextDaemons.values()) addCommand({ kind: "daemon", id, title: daemon.title }, daemon.command)
+
         yield* Ref.set(spells, nextSpells)
         yield* SubscriptionRef.set(daemons, nextDaemons)
-        const commands: Array<WireCommand> = [...nextSpells.values()].map(({ id, spell }) => ({
+        yield* SubscriptionRef.set(commands, nextCommands)
+        const wireCommands: Array<WireCommand> = [...nextSpells.values()].map(({ id, spell }) => ({
           id,
           title: spell.title,
           subtitle: spell.subtitle,
@@ -243,9 +272,9 @@ export class Registry extends Context.Service<Registry, {
           keywords: spell.keywords ?? [],
           mode: spell.mode ?? "view"
         }))
-        yield* wire.send({ type: "commands", commands, errors })
+        yield* wire.send({ type: "commands", commands: wireCommands, errors })
         yield* Effect.logInfo(
-          `Loaded ${commands.length} spell(s) and ${nextDaemons.size} daemon(s) from ${dir}${
+          `Loaded ${wireCommands.length} spell(s), ${nextDaemons.size} daemon(s), and ${nextCommands.size} command(s) from ${dir}${
             errors.length ? `, ${errors.length} failed` : ""
           }`
         )
@@ -261,7 +290,8 @@ export class Registry extends Context.Service<Registry, {
 
       // Hot reload: any change outside node_modules re-imports what changed.
       yield* fs.watch(dir, { recursive: true }).pipe(
-        Stream.filter((event) => !event.path.includes("node_modules")),
+        // Dotfiles are Cantrip's own (e.g. the CLI socket), never spells.
+        Stream.filter((event) => !event.path.includes("node_modules") && !path.basename(event.path).startsWith(".")),
         Stream.debounce(Duration.millis(200)),
         Stream.runForEach(() => reload),
         Effect.catchCause((cause) => Effect.logWarning("Spell watcher stopped", cause)),
@@ -271,6 +301,7 @@ export class Registry extends Context.Service<Registry, {
       return Registry.of({
         get: (id) => Effect.map(Ref.get(spells), (map) => map.get(id)),
         daemons,
+        commands,
         reload
       })
     })

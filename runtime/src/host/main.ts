@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect"
 import * as FetchHttpClient from "effect/http/FetchHttpClient"
 import * as Layer from "effect/Layer"
 import * as Stream from "effect/Stream"
+import { Commands } from "./Commands.ts"
 import { Daemons } from "./Daemons.ts"
 import { Registry } from "./Registry.ts"
 import { Sessions } from "./Sessions.ts"
@@ -42,7 +43,7 @@ const main = Effect.gen(function*() {
 
 const Platform = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer)
 
-const Host = Layer.mergeAll(Sessions.layer, Daemons.layer).pipe(
+const Host = Layer.mergeAll(Sessions.layer, Commands.layer.pipe(Layer.provideMerge(Daemons.layer))).pipe(
   Layer.provideMerge(Registry.layer),
   Layer.provideMerge(Wire.layer),
   Layer.provide(Platform)

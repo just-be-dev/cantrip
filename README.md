@@ -193,11 +193,57 @@ export const battery = Daemon.summon({
   `ChildProcessSpawner`). There's no `Ui`; use `MenuBar.hud` and
   `MenuBar.open`.
 
+- **Shared services.** `layer` (optional) is built once in the daemon's scope;
+  `run`, menu actions, and the daemon's CLI command all get what it provides.
+
 Two real ones ship in [`grimoire/`](grimoire): **claude-usage.ts** (what's left
 of your Claude plan limits, as a ring) and **insomnia/** (keeps the Mac awake
 with the lid closed; see the comment at the top of `index.ts` for the one-time
 sudoers rule). The grimoire is only seeded on first launch, so copy them into
 `~/.config/cantrip/grimoire` to use them.
+
+## CLI commands
+
+A spell or daemon can bring a terminal command along: give it a `command`, an
+[`effect/cli`](runtime/node_modules/effect/dist/cli/Command.d.ts) `Command`.
+Cantrip links it into `~/.local/bin` under the command's name, so it's on
+your PATH as soon as you save the file.
+
+```ts
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
+import * as Console from "effect/Console"
+
+export const uuid = Spell.make({
+  title: "Generate UUID",
+  run: /* … */,
+  command: Command.make("uuid", { count: Flag.Int("count").pipe(Flag.withDefault(1)) }, ({ count }) =>
+    Effect.forEach(Array.from({ length: count }), () => Console.log(crypto.randomUUID())))
+})
+```
+
+```console
+$ uuid --count 2
+$ cantrip            # lists every command from your grimoire
+```
+
+- **It runs in Cantrip, not in your shell.** The link starts a small client
+  that hands argv to the running host over a socket and streams stdout,
+  stderr, and piped stdin back. `Console.log` prints to your terminal, Ctrl-C
+  interrupts the handler, and the exit code comes back (0 ok, 1 failed, 2 bad
+  arguments, 130 interrupted). If Cantrip isn't running, the client launches
+  it first.
+- **A daemon's command runs inside the daemon**, with its `layer`'s services
+  and `MenuBar`. So `insomnia start 1h` drives the same live session as the
+  menu, and `claude-usage` prints the same snapshot the ring shows.
+- **Handlers get** the platform services, plus `Stdio` and `Terminal` wired
+  to your terminal. There's no `Ui`. Prompts and raw keyboard input aren't
+  supported.
+- **Links.** Cantrip only adds and removes its own symlinks (they point at
+  `~/.config/cantrip/bin/cantrip`). If a file with the same name is already
+  there it's left alone, and the host log says so. Set `CANTRIP_BIN_DIR` to
+  link somewhere else. Names are lowercase (`a-z0-9._-`) and unique across the
+  grimoire.
 
 ## Config
 
@@ -221,6 +267,7 @@ Environment variables, for development:
 | `CANTRIP_RUNTIME` | use a different `runtime/` |
 | `CANTRIP_SHOW_ON_LAUNCH=1` | open the bar at launch |
 | `CANTRIP_KEEP_OPEN=1` | don't hide when the bar loses focus |
+| `CANTRIP_BIN_DIR` | where command links go (default `~/.local/bin`) |
 
 ## Layout
 

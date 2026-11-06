@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import { parseDuration } from "./cli.ts"
 import { longRemaining, shortRemaining } from "./menu.ts"
 import {
   type Battery,
@@ -308,5 +309,18 @@ describe("SessionManager", () => {
     expect(status.session._tag).toBe("Idle")
     // The optimistic save is rolled back.
     expect(mac.persisted.session._tag).toBe("Idle")
+  })
+})
+
+describe("insomnia start durations", () => {
+  test("reads hours, minutes, both, bare minutes, and until-stopped", () => {
+    expect(parseDuration("")).toBe(null)
+    expect(parseDuration("until-stopped")).toBe(null)
+    expect(parseDuration("30m")).toBe(1800)
+    expect(parseDuration("1h")).toBe(3600)
+    expect(parseDuration("1h30m")).toBe(5400)
+    expect(parseDuration("90")).toBe(5400)
+    expect(parseDuration("0m")).toBe(undefined)
+    expect(parseDuration("soon")).toBe(undefined)
   })
 })

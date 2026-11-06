@@ -2,7 +2,11 @@
 // It uses Claude Code's login (the "Claude Code-credentials" Keychain item) and the
 // endpoint behind Claude Code's /usage. When the token expires it refreshes it and
 // saves it back the way Claude Code does, so the two stay in sync.
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Clock from "effect/Clock"
+import * as Console from "effect/Console"
+import * as Context from "effect/Context"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as HttpClient from "effect/http/HttpClient"
@@ -10,10 +14,11 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as ChildProcess from "effect/process/ChildProcess"
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
-import * as Ref from "effect/Ref"
+import * as Layer from "effect/Layer"
 import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
+import * as SubscriptionRef from "effect/SubscriptionRef"
 import { userInfo } from "node:os"
 import { Daemon, type DaemonServices, MenuBar } from "cantrip"
 
@@ -241,7 +246,7 @@ const fetchSnapshot = Effect.gen(function*() {
   const creds = expiringSoon(stored, yield* Clock.currentTimeMillis) ? yield* refreshTokens(stored) : stored
   return yield* fetchUsage(creds.accessToken).pipe(
     Effect.catchTag("HttpError", (error) =>
-      error.status !== 401 ? Effect.fail(error) : Effect.gen(function*() {
+      error.status === 401 ? Effect.gen(function*() {
         // Revoked or rotated elsewhere: re-read (Claude Code may have refreshed), then refresh.
         const latest = yield* readCredentials
         if (latest.accessToken !== creds.accessToken && !expiringSoon(latest, yield* Clock.currentTimeMillis)) {
@@ -249,7 +254,7 @@ const fetchSnapshot = Effect.gen(function*() {
         }
         const fresh = yield* refreshTokens(latest)
         return yield* fetchUsage(fresh.accessToken)
-      }))
+      }) : Effect.fail(error))
   )
 })
 
@@ -343,7 +348,7 @@ export const parseUsage = (root: Readonly<Record<string, unknown>>, now: number)
       })
     }
   }
-  windows.sort((a, b) => a.order - b.order || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0))
+  windows.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
 
   const extra = decodeExtra(root.extra_usage)
   return {
@@ -364,8 +369,11 @@ export const parseUsage = (root: Readonly<Record<string, unknown>>, now: number)
 const tightest = (snapshot: Snapshot | undefined) =>
   snapshot?.windows.reduce<UsageWindow | undefined>((min, w) => (!min || w.remaining < min.remaining ? w : min), undefined)
 
-const toneFor = (remaining: number): MenuBar.Tone =>
-  remaining <= 10 ? "critical" : remaining <= 25 ? "warning" : "normal"
+const toneFor = (remaining: number): MenuBar.Tone => {
+  if (remaining <= 10) return "critical"
+  if (remaining <= 25) return "warning"
+  return "normal"
+}
 
 const span = (seconds: number, units: ReadonlyArray<readonly [string, number]>) => {
   let rest = Math.floor(seconds)
@@ -418,7 +426,7 @@ const extraSummary = (extra: ExtraUsage) => {
     return `${money(extra.usedCredits, code)} / ${money(extra.monthlyLimit, code)}`
   }
   if (extra.usedCredits !== undefined) return `${money(extra.usedCredits, code)} used`
-  return extra.utilization !== undefined ? `${Math.trunc(extra.utilization)}% used` : "Enabled"
+  return extra.utilization === undefined ? "Enabled" : `${Math.trunc(extra.utilization)}% used`
 }
 
 // MARK: View
@@ -447,19 +455,19 @@ export const view = (
       rows.push(MenuBar.item(w.label, {
         progress: w.remaining / 100,
         accessory: `${Math.round(w.remaining)}% left`,
-        subtitle: w.resetsAt !== undefined ? `Resets ${resetText(w.resetsAt, now)}` : undefined,
+        subtitle: w.resetsAt === undefined ? undefined : `Resets ${resetText(w.resetsAt, now)}`,
         tone: toneFor(w.remaining)
       }))
     }
     const extra = snapshot.extra
     if (extra) {
       rows.push(
-        extra.utilization !== undefined
-          ? MenuBar.item("Extra usage", {
+        extra.utilization === undefined
+          ? MenuBar.item("Extra usage", { subtitle: extraSummary(extra) })
+          : MenuBar.item("Extra usage", {
             progress: Math.min(extra.utilization, 100) / 100,
             accessory: extraSummary(extra)
           })
-          : MenuBar.item("Extra usage", { subtitle: extraSummary(extra) })
       )
     }
   } else if (!error) {
@@ -487,56 +495,138 @@ export const view = (
   }
 }
 
+// MARK: Shared state
+
+/**
+ * The usage state, shared by the menu and the `claude-usage` command. Built once
+ * per daemon run (as its `layer`), so both see the same snapshot and a refresh
+ * from either is never doubled up.
+ */
+export class Usage extends Context.Service<Usage, {
+  readonly state: SubscriptionRef.SubscriptionRef<State>
+  /** Fetches unless a fetch is running, or (unless forced) one started under 30s ago. */
+  readonly refresh: (force: boolean) => Effect.Effect<void>
+  /** Waits until no fetch is running. */
+  readonly settled: Effect.Effect<State>
+}>()("claude-usage/Usage") {
+  static readonly layer = Layer.effect(
+    Usage,
+    Effect.gen(function*() {
+      const state = yield* SubscriptionRef.make<State>({
+        snapshot: undefined,
+        error: undefined,
+        loading: false,
+        lastAttempt: 0
+      })
+      const services = yield* Effect.context<HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner>()
+
+      const refresh = (force: boolean): Effect.Effect<void> =>
+        Effect.gen(function*() {
+          const now = yield* Clock.currentTimeMillis
+          const start = yield* SubscriptionRef.modify(state, (s): readonly [boolean, State] =>
+            s.loading || (!force && now - s.lastAttempt < MIN_MANUAL_MS)
+              ? [false, s]
+              : [true, { ...s, loading: true, lastAttempt: now }])
+          if (!start) return
+          const result = yield* fetchSnapshot.pipe(Effect.result, Effect.provideContext(services))
+          if (Result.isFailure(result)) yield* Effect.logWarning("Claude usage refresh failed", result.failure)
+          // On failure keep the last snapshot; the badge says it's stale.
+          yield* SubscriptionRef.update(state, (s) =>
+            Result.isSuccess(result)
+              ? { ...s, loading: false, snapshot: result.success, error: undefined }
+              : { ...s, loading: false, error: describe(result.failure) })
+        }).pipe(
+          // If interrupted mid-fetch, don't leave the spinner on.
+          Effect.onInterrupt(() => SubscriptionRef.update(state, (s) => ({ ...s, loading: false })))
+        )
+
+      const settled = SubscriptionRef.changes(state).pipe(
+        Stream.filter((s) => !s.loading),
+        Stream.runHead,
+        Effect.flatMap((s) => s._tag === "Some" ? Effect.succeed(s.value) : SubscriptionRef.get(state))
+      )
+
+      return Usage.of({ state, refresh, settled })
+    })
+  )
+}
+
+// MARK: Command
+
+const bar = (remaining: number, width = 10) => {
+  const filled = Math.round((Math.max(0, Math.min(100, remaining)) / 100) * width)
+  return `${"█".repeat(filled)}${"░".repeat(width - filled)}`
+}
+
+export const usageText = (state: State, now: number): string => {
+  const { snapshot, error } = state
+  if (!snapshot) return `Claude usage: ${error ?? "no data yet"}`
+  const lines = [`Claude usage · updated ${agoText(snapshot.fetchedAt, now)}`, ""]
+  if (snapshot.windows.length === 0) lines.push("No plan limits reported for this account.")
+  const width = Math.max(0, ...snapshot.windows.map((w) => w.label.length), snapshot.extra ? "Extra usage".length : 0)
+  for (const w of snapshot.windows) {
+    const left = `${Math.round(w.remaining)}% left`.padStart(9)
+    const reset = w.resetsAt === undefined ? "" : `  resets ${resetText(w.resetsAt, now)}`
+    lines.push(`${w.label.padEnd(width)}  ${bar(w.remaining)} ${left}${reset}`)
+  }
+  if (snapshot.extra) lines.push(`${"Extra usage".padEnd(width)}  ${extraSummary(snapshot.extra)}`)
+  if (error) lines.push("", `Last refresh failed: ${error}`)
+  return lines.join("\n")
+}
+
+const usageCommand = Command.make(
+  "claude-usage",
+  {
+    json: Flag.Boolean("json").pipe(Flag.withDefault(false), Flag.withDescription("Print the raw snapshot as JSON")),
+    refresh: Flag.Boolean("refresh").pipe(Flag.withDefault(false), Flag.withDescription("Fetch now, even if the data is fresh"))
+  },
+  ({ json, refresh }) =>
+    Effect.gen(function*() {
+      const usage = yield* Usage
+      // Same rule as opening the menu: data under 30s old is used as is.
+      yield* usage.refresh(refresh)
+      const state = yield* usage.settled
+      const now = yield* Clock.currentTimeMillis
+      if (json) {
+        yield* Console.log(JSON.stringify({ ...state.snapshot, error: state.error ?? null }, null, 2))
+      } else {
+        yield* Console.log(usageText(state, now))
+      }
+      if (!state.snapshot) return yield* Effect.fail(new Error(state.error ?? "no usage data"))
+    })
+).pipe(Command.withDescription("Show how much of your Claude plan limits you have left"))
+
 // MARK: Daemon
 
 export default Daemon.summon({
   title: "Claude Usage",
   icon: "gauge.with.dots.needle.33percent",
+  layer: Usage.layer,
+  command: usageCommand,
   run: Effect.gen(function*() {
-    const state = yield* Ref.make<State>({ snapshot: undefined, error: undefined, loading: false, lastAttempt: 0 })
+    const usage = yield* Usage
 
-    const render: Effect.Effect<void, never, MenuBar.MenuBar> = Effect.gen(function*() {
+    const render = Effect.gen(function*() {
       const now = yield* Clock.currentTimeMillis
-      yield* MenuBar.render(view(yield* Ref.get(state), now, refresh(true)))
+      yield* MenuBar.render(view(yield* SubscriptionRef.get(usage.state), now, usage.refresh(true)))
     })
 
-    /** Fetches unless a fetch is running, or (unless forced) one started under 30s ago. */
-    const refresh = (force: boolean): Effect.Effect<void, never, DaemonServices> =>
-      Effect.gen(function*() {
-        const now = yield* Clock.currentTimeMillis
-        const start = yield* Ref.modify(state, (s): readonly [boolean, State] =>
-          s.loading || (!force && now - s.lastAttempt < MIN_MANUAL_MS)
-            ? [false, s]
-            : [true, { ...s, loading: true, lastAttempt: now }])
-        if (!start) return
-        yield* render
-        const result = yield* fetchSnapshot.pipe(
-          Effect.result,
-          Effect.ensuring(Ref.update(state, (s) => ({ ...s, loading: false })))
-        )
-        if (Result.isFailure(result)) yield* Effect.logWarning("Claude usage refresh failed", result.failure)
-        // On failure keep the last snapshot; the badge says it's stale.
-        yield* Ref.update(state, (s) =>
-          Result.isSuccess(result)
-            ? { ...s, snapshot: result.success, error: undefined }
-            : { ...s, error: describe(result.failure) })
-        yield* render
-      })
-
-    yield* render
+    // Every state change (from the menu, the timer, or the command) redraws.
+    yield* SubscriptionRef.changes(usage.state).pipe(Stream.runForEach(() => render), Effect.forkChild)
     yield* MenuBar.opened.pipe(
-      Stream.runForEach(() => Effect.andThen(render, refresh(false))),
+      Stream.runForEach(() => Effect.andThen(render, usage.refresh(false))),
       Effect.forkChild
     )
 
     // Poll the wall clock rather than trusting a 5-minute timer, which pauses during sleep.
-    while (true) {
-      const { lastAttempt } = yield* Ref.get(state)
+    const tick = Effect.gen(function*() {
+      const { lastAttempt } = yield* SubscriptionRef.get(usage.state)
       const now = yield* Clock.currentTimeMillis
-      if (now - lastAttempt >= POLL_MS || now < lastAttempt) yield* refresh(true)
+      if (now - lastAttempt >= POLL_MS || now < lastAttempt) yield* usage.refresh(true)
       else yield* render
-      const due = (yield* Ref.get(state)).lastAttempt + POLL_MS - (yield* Clock.currentTimeMillis)
+      const due = (yield* SubscriptionRef.get(usage.state)).lastAttempt + POLL_MS - (yield* Clock.currentTimeMillis)
       yield* Effect.sleep(Duration.millis(Math.max(1000, Math.min(TICK_MS, due))))
-    }
+    })
+    return yield* Effect.forever(tick)
   })
 })
