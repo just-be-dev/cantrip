@@ -67,27 +67,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Cantrip")
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open Cantrip (\(config.hotkey))", action: #selector(openPanel), keyEquivalent: "").target = self
+        let open = menu.addItem(withTitle: "Open Cantrip", action: #selector(openPanel), keyEquivalent: "")
+        open.target = self
+        open.image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: nil)
+        // Shown right-aligned in menu glyphs (⌘Space); the global hotkey does the real work.
+        if let shortcut = config.menuShortcut {
+            open.keyEquivalent = shortcut.key
+            open.keyEquivalentModifierMask = shortcut.modifiers
+        }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Reload Spells", action: #selector(reloadSpells), keyEquivalent: "r").target = self
-        menu.addItem(withTitle: "Restart Spell Host", action: #selector(restartHost), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Open Grimoire", action: #selector(openGrimoire), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Open Host Log", action: #selector(openLog), keyEquivalent: "").target = self
+        addItem(menu, .openGrimoire, #selector(openGrimoire))
+        addItem(menu, .openJournal, #selector(openJournal))
+        menu.addItem(.separator())
+        addItem(menu, .shortRest, #selector(shortRest), "r")
+        addItem(menu, .longRest, #selector(longRest))
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
         login.target = self
+        login.image = NSImage(systemSymbolName: "sunrise", accessibilityDescription: nil)
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Cantrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = menu.addItem(withTitle: "Quit Cantrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.image = NSImage(systemSymbolName: Builtin.quit.icon, accessibilityDescription: nil)
         item.menu = menu
         statusItem = item
     }
 
+    private func addItem(_ menu: NSMenu, _ builtin: Builtin, _ action: Selector, _ key: String = "") {
+        let item = menu.addItem(withTitle: builtin.title, action: action, keyEquivalent: key)
+        item.target = self
+        item.toolTip = builtin.detail
+        item.image = NSImage(systemSymbolName: builtin.icon, accessibilityDescription: nil)
+    }
+
     @objc private func openPanel() { panel.show() }
-    @objc private func reloadSpells() { store.perform(builtin: .reloadSpells) }
-    @objc private func restartHost() { host.restart() }
+    @objc private func shortRest() { store.perform(builtin: .shortRest) }
+    @objc private func longRest() { store.perform(builtin: .longRest) }
     @objc private func openGrimoire() { NSWorkspace.shared.open(CantripConfig.grimoireDirectory) }
-    @objc private func openLog() { NSWorkspace.shared.open(host.logURL) }
+    @objc private func openJournal() { NSWorkspace.shared.open(host.logURL) }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
         let service = SMAppService.mainApp

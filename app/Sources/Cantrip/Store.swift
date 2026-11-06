@@ -29,22 +29,35 @@ struct ActionItem: Identifiable {
 }
 
 enum Builtin: String, CaseIterable {
-    case reloadSpells, openGrimoire, openLog, quit
+    case shortRest, longRest, openGrimoire, openJournal, quit
+
+    /// What it actually does, for tooltips and the bar's subtitle.
+    var detail: String {
+        switch self {
+        case .shortRest: "Reload spells from your grimoire"
+        case .longRest: "Restart the spell engine; stops running spells"
+        case .openGrimoire: "Your spells folder"
+        case .openJournal: "The spell engine's log"
+        case .quit: "Close Cantrip"
+        }
+    }
 
     var title: String {
         switch self {
-        case .reloadSpells: "Reload Spells"
+        case .shortRest: "Short Rest"
+        case .longRest: "Long Rest"
         case .openGrimoire: "Open Grimoire"
-        case .openLog: "Open Spell Host Log"
+        case .openJournal: "Open Journal"
         case .quit: "Quit Cantrip"
         }
     }
 
     var icon: String {
         switch self {
-        case .reloadSpells: "arrow.clockwise"
+        case .shortRest: "cup.and.saucer"
+        case .longRest: "moon.zzz"
         case .openGrimoire: "books.vertical"
-        case .openLog: "doc.text.magnifyingglass"
+        case .openJournal: "scroll"
         case .quit: "power"
         }
     }
@@ -93,6 +106,8 @@ final class Store {
     var toast: Toast?
     /// Bumped to ask the search field to take focus.
     var focusToken = 0
+    /// Set while a short or long rest is under way; the next spell list ends it.
+    @ObservationIgnored var restingSince: Date?
 
     private var rootQuery = ""
     private var rootSelection = 0
@@ -205,10 +220,10 @@ final class Store {
         }
         for builtin in Builtin.allCases {
             let row = Row(
-                id: "builtin:\(builtin.rawValue)", title: builtin.title, subtitle: nil, icon: Icon(builtin.icon),
+                id: "builtin:\(builtin.rawValue)", title: builtin.title, subtitle: builtin.detail, icon: Icon(builtin.icon),
                 accessories: ["Cantrip"],
                 actions: [ActionItem(id: "run", title: builtin.title, icon: builtin.icon, kind: .builtin(builtin))])
-            candidates.append((row, [builtin.title], usage[row.id] ?? 0))
+            candidates.append((row, [builtin.title, builtin.detail], usage[row.id] ?? 0))
         }
 
         if rootQuery.isEmpty {
@@ -268,13 +283,19 @@ final class Store {
 
     func perform(builtin: Builtin) {
         switch builtin {
-        case .reloadSpells:
+        case .shortRest:
+            restingSince = Date()
             host.send(.reload)
-            showToast(Toast(style: .info, title: "Reloading spells…", message: nil))
+            showToast(Toast(style: .info, title: "Taking a short rest…", message: nil))
+        case .longRest:
+            endSession()
+            restingSince = Date()
+            host.restart()
+            showToast(Toast(style: .info, title: "Taking a long rest…", message: nil))
         case .openGrimoire:
             NSWorkspace.shared.open(CantripConfig.grimoireDirectory)
             hidePanel()
-        case .openLog:
+        case .openJournal:
             NSWorkspace.shared.open(host.logURL)
             hidePanel()
         case .quit:

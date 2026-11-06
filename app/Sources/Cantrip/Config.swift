@@ -5,8 +5,8 @@
 //   "bun": "/path/to/bun"       // optional; found automatically otherwise
 // }
 
+import AppKit
 import Carbon
-import Foundation
 
 struct CantripConfig: Decodable {
     var hotkey: String = "option+space"
@@ -58,6 +58,27 @@ struct CantripConfig: Decodable {
         }
         guard let keyCode else { return nil }
         return (keyCode, modifiers)
+    }
+
+    /// The hotkey as a menu key equivalent, so menus can show it the native way (⌘Space).
+    var menuShortcut: (key: String, modifiers: NSEvent.ModifierFlags)? {
+        var modifiers: NSEvent.ModifierFlags = []
+        var key: String?
+        for part in hotkey.lowercased().split(separator: "+").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+            switch part {
+            case "cmd", "command": modifiers.insert(.command)
+            case "opt", "option", "alt": modifiers.insert(.option)
+            case "ctrl", "control": modifiers.insert(.control)
+            case "shift": modifiers.insert(.shift)
+            case "space": key = " "
+            case "return", "enter": key = "\r"
+            case "tab": key = "\t"
+            case "escape": key = "\u{1b}"
+            default: key = part.count == 1 ? part : nil
+            }
+        }
+        guard let key else { return nil }
+        return (key, modifiers)
     }
 
     private static let keyCodes: [String: UInt32] = {

@@ -27,8 +27,16 @@ launch Cantrip creates it and copies in the examples from
 they reload as soon as you save.
 
 The installed app turns on **Launch at Login** the first time it runs. Toggle
-it from the 🪄 menu bar icon, which also has Open Grimoire, Reload Spells, Restart Spell
-Host, and the log.
+it from the 🪄 menu bar icon. The menu also has:
+
+| Item | Does |
+|-|-|
+| Open Grimoire | opens your spells folder |
+| Open Journal | opens the spell engine's log |
+| Short Rest (⌘R) | reloads spells from your grimoire (saving a file does this too) |
+| Long Rest | restarts the spell engine, which stops any running spell |
+
+The bar's search finds the same commands.
 
 ## Keys
 
@@ -39,7 +47,7 @@ Host, and the log.
 | ↵ / ⌘↵ | first / second action |
 | ⌘K | every action for the selection |
 | Esc | close actions → go back one view → clear the search → hide |
-| ⌘R | reload spells (from the root search) |
+| ⌘R | Short Rest: reload spells (from the root search) |
 
 The bar hides when it loses focus. Reopen it within 90 seconds and you're
 right where you left off; after that it starts fresh.

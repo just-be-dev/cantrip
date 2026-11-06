@@ -24,7 +24,7 @@ extension Store {
             actionsSelection = 0
             return true
         case 15 where cmd && session == nil:  // ⌘R
-            perform(builtin: .reloadSpells); return true
+            perform(builtin: .shortRest); return true
         case 53:  // escape
             escape(); return true
         default:
