@@ -32,9 +32,9 @@ it from the 🪄 menu bar icon. The menu also has:
 | Item | Does |
 |-|-|
 | Open Grimoire | opens your spells folder |
-| Open Journal | opens the spell engine's log |
-| Short Rest (⌘R) | reloads spells from your grimoire (saving a file does this too) |
-| Long Rest | restarts the spell engine, which stops any running spell |
+| Open Journal | opens the daemon's log |
+| Reload Grimoire (⌘R) | loads new and changed spells (saving a file does this too) |
+| Restart Daemon | restarts the background bun process that runs spells, which stops any running spell |
 
 The bar's search finds the same commands.
 
@@ -47,7 +47,7 @@ The bar's search finds the same commands.
 | ↵ / ⌘↵ | first / second action |
 | ⌘K | every action for the selection |
 | Esc | close actions → go back one view → clear the search → hide |
-| ⌘R | Short Rest: reload spells (from the root search) |
+| ⌘R | Reload Grimoire (from the root search) |
 
 The bar hides when it loses focus. Reopen it within 90 seconds and you're
 right where you left off; after that it starts fresh.

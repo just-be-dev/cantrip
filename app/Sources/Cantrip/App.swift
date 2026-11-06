@@ -79,8 +79,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addItem(menu, .openGrimoire, #selector(openGrimoire))
         addItem(menu, .openJournal, #selector(openJournal))
         menu.addItem(.separator())
-        addItem(menu, .shortRest, #selector(shortRest), "r")
-        addItem(menu, .longRest, #selector(longRest))
+        addItem(menu, .reloadGrimoire, #selector(reloadGrimoire), "r")
+        addItem(menu, .restartDaemon, #selector(restartDaemon))
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
         login.target = self
@@ -101,8 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openPanel() { panel.show() }
-    @objc private func shortRest() { store.perform(builtin: .shortRest) }
-    @objc private func longRest() { store.perform(builtin: .longRest) }
+    @objc private func reloadGrimoire() { store.perform(builtin: .reloadGrimoire) }
+    @objc private func restartDaemon() { store.perform(builtin: .restartDaemon) }
     @objc private func openGrimoire() { NSWorkspace.shared.open(CantripConfig.grimoireDirectory) }
     @objc private func openJournal() { NSWorkspace.shared.open(host.logURL) }
 

@@ -29,23 +29,23 @@ struct ActionItem: Identifiable {
 }
 
 enum Builtin: String, CaseIterable {
-    case shortRest, longRest, openGrimoire, openJournal, quit
+    case reloadGrimoire, restartDaemon, openGrimoire, openJournal, quit
 
     /// What it actually does, for tooltips and the bar's subtitle.
     var detail: String {
         switch self {
-        case .shortRest: "Reload spells from your grimoire"
-        case .longRest: "Restart the spell engine; stops running spells"
+        case .reloadGrimoire: "Load new and changed spells (saving a file does this too)"
+        case .restartDaemon: "Restart the background process that runs spells; stops any running spell"
         case .openGrimoire: "Your spells folder"
-        case .openJournal: "The spell engine's log"
+        case .openJournal: "The daemon's log"
         case .quit: "Close Cantrip"
         }
     }
 
     var title: String {
         switch self {
-        case .shortRest: "Short Rest"
-        case .longRest: "Long Rest"
+        case .reloadGrimoire: "Reload Grimoire"
+        case .restartDaemon: "Restart Daemon"
         case .openGrimoire: "Open Grimoire"
         case .openJournal: "Open Journal"
         case .quit: "Quit Cantrip"
@@ -54,8 +54,8 @@ enum Builtin: String, CaseIterable {
 
     var icon: String {
         switch self {
-        case .shortRest: "cup.and.saucer"
-        case .longRest: "moon.zzz"
+        case .reloadGrimoire: "arrow.clockwise"
+        case .restartDaemon: "arrow.triangle.2.circlepath"
         case .openGrimoire: "books.vertical"
         case .openJournal: "scroll"
         case .quit: "power"
@@ -106,8 +106,8 @@ final class Store {
     var toast: Toast?
     /// Bumped to ask the search field to take focus.
     var focusToken = 0
-    /// Set while a short or long rest is under way; the next spell list ends it.
-    @ObservationIgnored var restingSince: Date?
+    /// Set by Reload Grimoire / Restart Daemon; the next spell list reports back and clears it.
+    @ObservationIgnored var reloadRequested = false
 
     private var rootQuery = ""
     private var rootSelection = 0
@@ -283,15 +283,15 @@ final class Store {
 
     func perform(builtin: Builtin) {
         switch builtin {
-        case .shortRest:
-            restingSince = Date()
+        case .reloadGrimoire:
+            reloadRequested = true
             host.send(.reload)
-            showToast(Toast(style: .info, title: "Taking a short rest…", message: nil))
-        case .longRest:
+            showToast(Toast(style: .info, title: "Reloading grimoire…", message: nil))
+        case .restartDaemon:
             endSession()
-            restingSince = Date()
+            reloadRequested = true
             host.restart()
-            showToast(Toast(style: .info, title: "Taking a long rest…", message: nil))
+            showToast(Toast(style: .info, title: "Restarting daemon…", message: nil))
         case .openGrimoire:
             NSWorkspace.shared.open(CantripConfig.grimoireDirectory)
             hidePanel()

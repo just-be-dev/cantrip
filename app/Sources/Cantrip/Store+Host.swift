@@ -10,10 +10,10 @@ extension Store {
             self.loadErrors = errors
             if !errors.isEmpty {
                 showToast(Toast(style: .failure, title: "\(errors.count) spell(s) failed to load", message: errors.joined(separator: "\n")))
-            } else if restingSince != nil {
-                showToast(Toast(style: .success, title: "Rested", message: "\(commands.count) spells ready"))
+            } else if reloadRequested {
+                showToast(Toast(style: .success, title: "\(commands.count) spells loaded", message: nil))
             }
-            restingSince = nil
+            reloadRequested = false
         case let .render(id, depth, view):
             guard let session, session.id == id else { return }
             if depth < session.frames.count {
@@ -63,9 +63,9 @@ extension Store {
 
     /// The host restarted: every session it knew about is gone.
     func hostRestarted() {
-        if session != nil, restingSince == nil {
+        if session != nil, !reloadRequested {
             session = nil
-            showToast(Toast(style: .failure, title: "Concentration broken", message: "The spell engine restarted, so the running spell stopped."))
+            showToast(Toast(style: .failure, title: "Daemon restarted", message: "The running spell stopped."))
         }
     }
 }
