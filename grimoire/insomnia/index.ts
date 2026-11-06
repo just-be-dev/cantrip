@@ -4,9 +4,10 @@
 // Needs a one-time sudoers rule (Install Permissions… in the menu):
 //   <you> ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1
 //
-// Fails safe: when the daemon stops (Cantrip quits or crashes, Restart Host, or this
-// directory is edited) the session finalizer restores normal sleep. A session saved in
-// state.json resumes with its original deadline the next time Insomnia starts.
+// Fails safe: when the daemon stops for good (Cantrip quits or crashes, or the daemon fails or is removed)
+// the session finalizer restores normal sleep. Restart Host, Cantrip updates, and edits to these files
+// hand the session over instead: it stays on and the next start resumes it. Either way, a session
+// saved in state.json resumes with its original deadline the next time Insomnia starts.
 import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -17,7 +18,7 @@ import { insomniaCommand } from "./cli.ts"
 import { type Actions, errorTitle, icons, type Notice, statusItem } from "./menu.ts"
 import { batteryMonitorLayer, sleepControlLayer } from "./pmset.ts"
 import { privilegeInstallerLayer } from "./privileges.ts"
-import { PrivilegeInstaller } from "./service.ts"
+import { PrivilegeInstaller, ShutdownPolicy } from "./service.ts"
 import { SessionManager } from "./session.ts"
 import { fileStateStoreLayer } from "./store.ts"
 
@@ -27,7 +28,14 @@ const renderInterval = "15 seconds"
 const macosLayer = Layer.mergeAll(sleepControlLayer, batteryMonitorLayer, fileStateStoreLayer, privilegeInstallerLayer)
 
 /** The session's lifetime is the daemon's scope, so its finalizer runs when the daemon stops. */
-const insomniaLayer = SessionManager.layer.pipe(Layer.provideMerge(macosLayer))
+/** Reloads, Restart Host, and updates hand the session over; quitting, a crash, or a failure restores sleep. */
+const shutdownPolicyLayer = Layer.effect(
+  ShutdownPolicy,
+  Effect.map(Effect.context<Daemon.Lifecycle>(), (lifecycle) =>
+    ShutdownPolicy.of({ handingOff: Effect.provideContext(Daemon.isHandingOff, lifecycle) }))
+)
+
+const insomniaLayer = SessionManager.layer.pipe(Layer.provideMerge(Layer.merge(macosLayer, shutdownPolicyLayer)))
 
 interface ShownNotice {
   readonly notice: Notice

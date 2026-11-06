@@ -4,6 +4,7 @@ import * as Clock from "effect/Clock"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schedule from "effect/Schedule"
 import * as Semaphore from "effect/Semaphore"
 import type * as Stream from "effect/Stream"
@@ -21,7 +22,7 @@ import {
   type StateStoreError,
   type Status
 } from "./model.ts"
-import { BatteryMonitor, SleepControl, StateStore } from "./service.ts"
+import { BatteryMonitor, ShutdownPolicy, SleepControl, StateStore } from "./service.ts"
 
 /** How often expiry is checked. Cheap: it only reads the clock. */
 export const expiryCheckInterval = "1 second"
@@ -57,6 +58,8 @@ export class SessionManager extends Context.Service<SessionManager, {
       const sleep = yield* SleepControl
       const batteryMonitor = yield* BatteryMonitor
       const store = yield* StateStore
+      /** Optional: without it (tests, a plain run) every shutdown restores sleep. */
+      const policy = Option.getOrUndefined(yield* Effect.serviceOption(ShutdownPolicy))
       const lock = yield* Semaphore.make(1)
 
       /** `null` when pmset couldn't be read, so a read failure never looks like an outside change. */
@@ -174,6 +177,10 @@ export class SessionManager extends Context.Service<SessionManager, {
           Effect.gen(function*() {
             const { session } = yield* SubscriptionRef.get(ref)
             if (session._tag !== "Active") return
+            if (policy && (yield* policy.handingOff)) {
+              // state.json already says Active; the next start resumes it.
+              return yield* Effect.logInfo("Handing the session over to the next start")
+            }
             yield* endSession("Shutdown").pipe(
               Effect.tapError((error) => Effect.logError("Couldn't restore sleep on shutdown", error)),
               Effect.ignore

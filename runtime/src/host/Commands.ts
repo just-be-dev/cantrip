@@ -250,6 +250,12 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
               out(c, 1, listing(commands))
               return 0
             }
+            if (first === "handoff") {
+              // Used by `scripts/bundle.sh --install` right before it restarts Cantrip.
+              yield* daemons.handoff
+              out(c, 1, "Cantrip will hand daemons over on its next restart (for the next minute).\n")
+              return 0
+            }
             name = first
             args = rest
           }

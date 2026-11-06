@@ -213,6 +213,7 @@ enum AppMessage {
     case reload
     case menu(daemon: String, item: String)
     case menuOpened(daemon: String)
+    case handoff
 
     var json: [String: Any] {
         switch self {
@@ -224,6 +225,7 @@ enum AppMessage {
         case .reload: ["type": "reload"]
         case let .menu(daemon, item): ["type": "menu", "daemon": daemon, "item": item]
         case let .menuOpened(daemon): ["type": "menuOpened", "daemon": daemon]
+        case .handoff: ["type": "handoff"]
         }
     }
 }

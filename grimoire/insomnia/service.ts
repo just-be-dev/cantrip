@@ -33,3 +33,12 @@ export class StateStore extends Context.Service<StateStore, {
 export class PrivilegeInstaller extends Context.Service<PrivilegeInstaller, {
   readonly install: Effect.Effect<void, PrivilegeInstallFailed>
 }>()("insomnia/PrivilegeInstaller") {}
+
+/**
+ * Whether the session is stopping only to start again right away (Insomnia's
+ * files changed, or Cantrip is restarting or updating). Then the shutdown
+ * finalizer leaves the session on, saved, for the next start to resume.
+ */
+export class ShutdownPolicy extends Context.Service<ShutdownPolicy, {
+  readonly handingOff: Effect.Effect<boolean>
+}>()("insomnia/ShutdownPolicy") {}

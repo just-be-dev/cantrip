@@ -5,6 +5,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner"
 import type * as Scope from "effect/Scope"
 import type * as Stdio from "effect/Stdio"
 import type * as Terminal from "effect/Terminal"
+import type { Lifecycle } from "./Daemon.ts"
 import type { MenuBar } from "./MenuBar.ts"
 import type { Ui } from "./Ui.ts"
 
@@ -28,8 +29,9 @@ export type SpellServices = Ui | PlatformServices
  * Everything the host provides to a running daemon and its menu actions.
  * Daemons have no bar view, so they get `MenuBar` instead of `Ui`. `Scope`
  * is the daemon's own: finalizers added with it run when the daemon stops.
+ * `Lifecycle` says why it's stopping (see `Daemon.isHandingOff`).
  */
-export type DaemonServices = MenuBar | Scope.Scope | PlatformServices
+export type DaemonServices = MenuBar | Lifecycle | Scope.Scope | PlatformServices
 
 /**
  * What a CLI command's handlers get (see `Spell.command` / `Daemon.command`).

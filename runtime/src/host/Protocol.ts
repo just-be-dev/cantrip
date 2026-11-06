@@ -29,10 +29,12 @@ export const Close = Schema.Struct({ type: Schema.tag("close"), session: Schema.
 export const Reload = Schema.Struct({ type: Schema.tag("reload") })
 /** The user chose `item` (a `WireMenuItem.id`) in a daemon's menu, or from the bar's search. */
 export const MenuSelect = Schema.Struct({ type: Schema.tag("menu"), daemon: Schema.String, item: Schema.String })
+/** The app is about to restart the host (not quit): daemons should hand their state over. */
+export const Handoff = Schema.Struct({ type: Schema.tag("handoff") })
 /** The user opened a daemon's menu. */
 export const MenuOpened = Schema.Struct({ type: Schema.tag("menuOpened"), daemon: Schema.String })
 
-export const Inbound = Schema.Union([Run, Query, InvokeAction, Pop, Close, Reload, MenuSelect, MenuOpened]).pipe(
+export const Inbound = Schema.Union([Run, Query, InvokeAction, Pop, Close, Reload, MenuSelect, MenuOpened, Handoff]).pipe(
   Schema.toTaggedUnion("type")
 )
 export type Inbound = typeof Inbound.Type

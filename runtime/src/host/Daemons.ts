@@ -21,6 +21,7 @@ import * as Scope from "effect/Scope"
 import * as Semaphore from "effect/Semaphore"
 import * as Stream from "effect/Stream"
 import * as SubscriptionRef from "effect/SubscriptionRef"
+import * as DaemonSdk from "../sdk/Daemon.ts"
 import * as MenuBar from "../sdk/MenuBar.ts"
 import type { DaemonServices } from "../sdk/Services.ts"
 import type { Inbound, WireBarIcon, WireMenuEntry, WireStatusItem } from "./Protocol.ts"
@@ -41,6 +42,8 @@ interface Running {
   readonly ready: Deferred.Deferred<void, unknown>
   /** `run` failed; its layer is released and commands are refused. */
   failed: boolean
+  /** Set just before the daemon's scope (or its layer's) closes; read by `Daemon.stopReason`. */
+  stopReason: DaemonSdk.StopReason | undefined
 }
 
 /** A daemon's CLI command ran while the daemon wasn't running. */
@@ -134,13 +137,17 @@ export class Daemons extends Context.Service<Daemons, {
    * gets. It's interrupted if the daemon stops, and vice versa.
    */
   readonly runIn: <A, E>(id: string, effect: Effect.Effect<A, E, any>) => Effect.Effect<A, E | DaemonUnavailable>
+  /** The host is about to restart (not quit): let daemons hand their state over at shutdown. */
+  readonly handoff: Effect.Effect<void>
 }>()("cantrip/host/Daemons") {
   static readonly layer = Layer.effect(
     Daemons,
     Effect.gen(function*() {
       const wire = yield* Wire
       const registry = yield* Registry
-      const hostScope = yield* Effect.scope
+      // Not a child of the layer's scope: that would close each daemon before
+      // our finalizer below has told it why. The finalizer closes them all.
+      const daemonsScope = yield* Scope.make()
       const platform = yield* Effect.context<
         HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
       >()
@@ -190,6 +197,7 @@ export class Daemons extends Context.Service<Daemons, {
           (self) => Effect.suspend(() => Effect.provideContext(self, r.context)),
           Effect.provideService(MenuBar.MenuBar, menuBarFor(r)),
           Effect.provideService(Scope.Scope, r.scope),
+          Effect.provideService(DaemonSdk.Lifecycle, { stopReason: Effect.sync(() => r.stopReason) }),
           Effect.provideContext(platform)
         ) as Effect.Effect<A, E>
 
@@ -211,13 +219,14 @@ export class Daemons extends Context.Service<Daemons, {
         Effect.gen(function*() {
           const r: Running = {
             loaded,
-            scope: yield* Scope.fork(hostScope),
+            scope: yield* Scope.fork(daemonsScope),
             opened: yield* PubSub.unbounded<void>(),
             handlers: new Map(),
             shown: false,
             context: Context.empty(),
             ready: yield* Deferred.make<void, unknown>(),
-            failed: false
+            failed: false,
+            stopReason: undefined
           }
           running.set(loaded.id, r)
           yield* Effect.logInfo(`Starting daemon ${loaded.id}`)
@@ -245,18 +254,28 @@ export class Daemons extends Context.Service<Daemons, {
               Effect.gen(function*() {
                 r.failed = true
                 yield* Deferred.failCause(r.ready, cause)
-                if (!Cause.hasInterruptsOnly(cause)) yield* Scope.close(layerScope, Exit.void)
+                if (!Cause.hasInterruptsOnly(cause)) {
+                  r.stopReason = "failed"
+                  yield* Scope.close(layerScope, Exit.void)
+                }
               })
             )
           )
           yield* fork(r, `Daemon ${loaded.daemon.title}`, main, (cause) => showFailure(r, cause))
         })
 
-      /** `replaced`: a new instance starts right after, so keep the item (and its place in the menu bar). */
-      const stop = (r: Running, replaced = false) =>
+      /**
+       * `reason` is what the daemon's finalizers see. Unless it's `"shutdown"`
+       * or `"removed"`, a new instance starts right after, so the item (and its
+       * place in the menu bar) is kept.
+       */
+      const stop = (r: Running, reason: DaemonSdk.StopReason) =>
         Effect.gen(function*() {
+          const replaced = reason === "reload" || reason === "restart"
           if (live(r)) running.delete(r.loaded.id)
-          yield* Effect.logInfo(`Stopping daemon ${r.loaded.id}`)
+          // A failed daemon's layer already closed with "failed"; keep that.
+          r.stopReason = r.stopReason ?? reason
+          yield* Effect.logInfo(`Stopping daemon ${r.loaded.id} (${reason})`)
           yield* Scope.close(r.scope, Exit.void)
           yield* PubSub.shutdown(r.opened)
           if (!replaced && !running.has(r.loaded.id)) yield* wire.send({ type: "statusRemoved", daemon: r.loaded.id })
@@ -270,7 +289,7 @@ export class Daemons extends Context.Service<Daemons, {
           const current = yield* SubscriptionRef.get(registry.daemons)
           // A reload may have replaced or removed it while the user was choosing Restart.
           if (!live(r) || current.get(r.loaded.id) !== r.loaded) return
-          yield* stop(r, true)
+          yield* stop(r, "restart")
           yield* start(r.loaded)
         }).pipe(lock.withPermit)
 
@@ -278,16 +297,27 @@ export class Daemons extends Context.Service<Daemons, {
         Effect.gen(function*() {
           for (const r of [...running.values()]) {
             const replacement = next.get(r.loaded.id)
-            if (replacement?.daemon !== r.loaded.daemon) yield* stop(r, replacement !== undefined)
+            if (replacement?.daemon !== r.loaded.daemon) yield* stop(r, replacement ? "reload" : "removed")
           }
           for (const loaded of next.values()) {
             if (!running.has(loaded.id)) yield* start(loaded)
           }
         })
 
-      yield* Effect.addFinalizer(() =>
-        Effect.forEach([...running.values()], (r) => stop(r), { concurrency: "unbounded", discard: true })
-      )
+      /**
+       * Until this time (epoch ms), a host shutdown counts as a restart: Restart
+       * Host and reinstalls ask for it first, so daemons hand their state over.
+       */
+      let handoffUntil = 0
+      const handoff = Effect.sync(() => {
+        handoffUntil = Date.now() + 60_000
+      }).pipe(Effect.andThen(Effect.logInfo("Next shutdown is a restart; daemons will hand over")))
+
+      yield* Effect.addFinalizer(() => {
+        const reason: DaemonSdk.StopReason = Date.now() < handoffUntil ? "restart" : "shutdown"
+        return Effect.forEach([...running.values()], (r) => stop(r, reason), { concurrency: "unbounded", discard: true })
+          .pipe(Effect.andThen(Scope.close(daemonsScope, Exit.void)))
+      })
 
       yield* SubscriptionRef.changes(registry.daemons).pipe(
         Stream.runForEach((next) => lock.withPermit(reconcile(next))),
@@ -325,7 +355,7 @@ export class Daemons extends Context.Service<Daemons, {
           return yield* exit
         })
 
-      return Daemons.of({ handle, runIn })
+      return Daemons.of({ handle, runIn, handoff })
     })
   )
 }

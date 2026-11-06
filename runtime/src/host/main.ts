@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer"
 import * as Stream from "effect/Stream"
 import { Commands } from "./Commands.ts"
 import { Daemons } from "./Daemons.ts"
+import type { Inbound } from "./Protocol.ts"
 import { Registry } from "./Registry.ts"
 import { Sessions } from "./Sessions.ts"
 import { Wire } from "./Wire.ts"
@@ -30,12 +31,21 @@ const main = Effect.gen(function*() {
   if (Bun.semver.order(Bun.version, MinimumBun) < 0) {
     yield* Effect.logWarning(`bun ${Bun.version} is older than ${MinimumBun}; update bun or set "bun" in config.json`)
   }
+  const route = (message: Inbound): Effect.Effect<void> => {
+    switch (message.type) {
+      case "menu":
+      case "menuOpened":
+        return daemons.handle(message)
+      case "handoff":
+        return daemons.handoff
+      default:
+        return sessions.handle(message)
+    }
+  }
   // Each message is handled on its own fiber so a slow `run` never blocks input.
   yield* wire.incoming.pipe(
     Stream.runForEach((message) =>
-      Effect.forkDetach(
-        message.type === "menu" || message.type === "menuOpened" ? daemons.handle(message) : sessions.handle(message)
-      )
+      Effect.forkDetach(route(message))
     )
   )
   yield* Effect.logInfo("stdin closed; shutting down")

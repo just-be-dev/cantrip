@@ -35,6 +35,9 @@ echo "✓ $app"
 
 if [[ "${1:-}" == "--install" ]]; then
   dest="$HOME/Applications/Cantrip.app"
+  # An update is a restart, not a quit: let daemons hand their state over
+  # (e.g. Insomnia keeps its session) when the old host shuts down.
+  CANTRIP_NO_LAUNCH=1 "$HOME/.config/cantrip/bin/cantrip" handoff >/dev/null 2>&1 || true
   pkill -x Cantrip 2>/dev/null || true
   mkdir -p "$HOME/Applications"
   rm -rf "$dest"

@@ -29,7 +29,8 @@
  * are also offered in the bar's search.
  */
 import type * as Command from "effect/cli/Command"
-import type * as Effect from "effect/Effect"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
 import type * as Layer from "effect/Layer"
 import type { CommandServices, DaemonServices } from "./Services.ts"
 import type { Icon } from "./View.ts"
@@ -68,3 +69,32 @@ export interface Daemon {
 export const summon = <Provides = never>(daemon: Options<Provides>): Daemon => ({ [TypeId]: TypeId, ...daemon })
 
 export const isDaemon = (u: unknown): u is Daemon => typeof u === "object" && u !== null && TypeId in u
+
+/**
+ * Why a daemon is stopping, for its finalizers:
+ *
+ * - `"shutdown"`: Cantrip is quitting or crashed.
+ * - `"reload"`: its file changed; the new version starts right after.
+ * - `"restart"`: Cantrip is restarting its host or being reinstalled, and will be right back.
+ * - `"removed"`: its file (or export) is gone.
+ * - `"failed"`: its `run` failed.
+ */
+export type StopReason = "shutdown" | "reload" | "restart" | "removed" | "failed"
+
+export class Lifecycle extends Context.Service<Lifecycle, {
+  /** `undefined` while the daemon is running normally. */
+  readonly stopReason: Effect.Effect<StopReason | undefined>
+}>()("cantrip/Daemon/Lifecycle") {}
+
+/** Why the daemon is stopping (see `StopReason`), or `undefined` if it isn't. */
+export const stopReason: Effect.Effect<StopReason | undefined, never, Lifecycle> = Lifecycle.use((l) => l.stopReason)
+
+/**
+ * In a finalizer: is the daemon stopping only to start again right away
+ * (`"reload"` or `"restart"`)? Then hand state over (save it, leave it on)
+ * instead of tearing it down; the next start picks it up.
+ */
+export const isHandingOff: Effect.Effect<boolean, never, Lifecycle> = Effect.map(
+  stopReason,
+  (reason) => reason === "reload" || reason === "restart"
+)

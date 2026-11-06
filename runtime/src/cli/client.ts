@@ -70,6 +70,7 @@ const connectOrLaunch = async () => {
   try {
     return await connect()
   } catch {
+    if (process.env.CANTRIP_NO_LAUNCH) return fail("Cantrip isn't running", 69)
     Bun.spawnSync(["open", "-g", "-b", "dev.just-be.cantrip"], { stdout: "ignore", stderr: "ignore" })
     for (let i = 0; i < 50; i++) {
       await Bun.sleep(200)

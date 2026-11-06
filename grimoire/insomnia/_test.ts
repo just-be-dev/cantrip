@@ -17,7 +17,7 @@ import {
 } from "./model.ts"
 import { parseBattery, parseSleepDisabled, parseSudoList } from "./pmset.ts"
 import { sudoersRule } from "./privileges.ts"
-import { BatteryMonitor, SleepControl, StateStore } from "./service.ts"
+import { BatteryMonitor, ShutdownPolicy, SleepControl, StateStore } from "./service.ts"
 import { SessionManager } from "./session.ts"
 
 const pmsetG = (sleepDisabledLine: string) =>
@@ -200,10 +200,23 @@ const macLayer = (mac: Mac) =>
     })
   )
 
-/** Runs `body` with a manager, then closes its scope (the daemon stopping). */
-const withManager = <A, E>(mac: Mac, body: (manager: SessionManager["Service"]) => Effect.Effect<A, E>) =>
+/** Runs `body` with a manager, then closes its scope (the daemon stopping, handing over or not). */
+const withManager = <A, E>(
+  mac: Mac,
+  body: (manager: SessionManager["Service"]) => Effect.Effect<A, E>,
+  options?: { readonly handingOff?: boolean }
+) =>
   Effect.runPromise(
-    SessionManager.use(body).pipe(Effect.provide(SessionManager.layer.pipe(Layer.provide(macLayer(mac)))))
+    SessionManager.use(body).pipe(
+      Effect.provide(
+        SessionManager.layer.pipe(
+          Layer.provide(macLayer(mac)),
+          Layer.provide(
+            Layer.succeed(ShutdownPolicy, ShutdownPolicy.of({ handingOff: Effect.succeed(options?.handingOff ?? false) }))
+          )
+        )
+      )
+    )
   )
 
 describe("SessionManager", () => {
@@ -218,6 +231,19 @@ describe("SessionManager", () => {
     await withManager(mac, (m) => m.start(null))
     expect(mac.log).toEqual(["save Active", "pmset 1", "pmset 0", "save Idle Shutdown"])
     expect(mac.sleepDisabled).toBe(false)
+  })
+
+  test("handing over leaves an Active session on and saved, and the next start resumes it", async () => {
+    const mac = makeMac()
+    await withManager(mac, (m) => m.start(null), { handingOff: true })
+    expect(mac.log).toEqual(["save Active", "pmset 1"])
+    expect(mac.sleepDisabled).toBe(true)
+    expect(mac.persisted.session._tag).toBe("Active")
+    // The next instance picks it up, and a real shutdown then restores sleep.
+    const status = await withManager(mac, (m) => m.status)
+    expect(status.session._tag).toBe("Active")
+    expect(mac.sleepDisabled).toBe(false)
+    expect(mac.persisted.lastEnded?.reason).toBe("Shutdown")
   })
 
   test("shutdown leaves an outside disablesleep alone", async () => {

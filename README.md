@@ -175,6 +175,13 @@ export const battery = Daemon.summon({
   scope, so finalizers run first. Saving a file restarts only the daemons in
   that file (or that directory spell); the rest keep running. If the new
   version fails to load, the old one keeps running.
+- **Restart or stop?** In a finalizer, `Daemon.stopReason` says why it's
+  stopping: `"shutdown"` (quit or crash), `"reload"` (its file changed),
+  `"restart"` (Restart Host, or an update via `mise run install-app`),
+  `"removed"`, or `"failed"`. `Daemon.isHandingOff` is true for reload and
+  restart, when the daemon is back a moment later: hand state over instead of
+  tearing it down. Insomnia keeps a running session through those and only
+  restores sleep on a real stop.
 - **The item.** `MenuBar.render` shows or updates it, and Swift draws it
   natively. The icon is an `Icon` string or `MenuBar.ring(value, { tone, busy,
   pulse, badge })`, a ring that animates between values. `title` is short text

@@ -24,7 +24,7 @@ import { Registry } from "./Registry.ts"
 import { Wire } from "./Wire.ts"
 
 /** Everything the app sends except daemon menu events, which go to `Daemons`. */
-export type SessionMessage = Exclude<Inbound, { readonly type: "menu" | "menuOpened" }>
+export type SessionMessage = Exclude<Inbound, { readonly type: "menu" | "menuOpened" | "handoff" }>
 
 interface Frame {
   readonly scope: Scope.Closeable

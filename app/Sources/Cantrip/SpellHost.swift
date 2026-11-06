@@ -83,8 +83,16 @@ final class SpellHost {
     }
 
     /// Restart the host. Every running spell is interrupted.
+    /// Restart the host. Daemons are told it's a restart first, so they can
+    /// hand their state over (Insomnia keeps its session) instead of tearing down.
     func restart() {
-        process?.terminate()  // didTerminate starts a new one
+        send(.handoff)
+        // Give the host a moment to read the handoff before SIGTERM arrives.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.process?.terminate()  // didTerminate starts a new one
+            }
+        }
     }
 
     func stop() {
