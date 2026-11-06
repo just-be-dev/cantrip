@@ -25,8 +25,9 @@ On first launch Cantrip creates `~/.config/cantrip/spells/` and copies the
 examples from [`spells/`](spells) into it. Edit them or add files there, and
 they reload as soon as you save.
 
-> Raycast also uses ⌥ Space. Quit it or change one of the two shortcuts (see
-> [Config](#config)).
+The installed app turns on **Launch at Login** the first time it runs. Toggle
+it from the 🪄 menu bar icon, which also has Reload Spells, Restart Spell
+Host, and the log.
 
 ## Keys
 
