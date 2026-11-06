@@ -18,6 +18,14 @@ if (!socketPath) fail("CANTRIP_SOCKET isn't set; run this through a command link
 
 let buffer = ""
 let interrupted = false
+/** Bytes the socket hasn't taken yet. Bun's `write` may take only part of a frame. */
+let pending = new Uint8Array()
+const encoder = new TextEncoder()
+
+// `cmd | head` closes our stdout early; exit quietly like other tools do.
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EPIPE") process.exit(141)
+})
 
 const connect = () =>
   Bun.connect({
@@ -49,6 +57,7 @@ const connect = () =>
           }
         }
       },
+      drain: (socket) => flush(socket),
       close: () => {
         if (process.exitCode === undefined) fail("Cantrip stopped while the command was running", 69)
       },
@@ -74,8 +83,27 @@ const connectOrLaunch = async () => {
   }
 }
 
+function flush(socket: { write: (data: Uint8Array) => number }) {
+  while (pending.length > 0) {
+    const written = socket.write(pending)
+    if (written <= 0) return
+    pending = pending.subarray(written)
+  }
+}
+
 const socket = await connectOrLaunch()
-const send = (frame: unknown) => socket.write(`${JSON.stringify(frame)}\n`)
+const send = (frame: unknown) => {
+  const bytes = encoder.encode(`${JSON.stringify(frame)}\n`)
+  const next = new Uint8Array(pending.length + bytes.length)
+  next.set(pending)
+  next.set(bytes, pending.length)
+  pending = next
+  flush(socket)
+}
+/** Resolves once everything queued has been handed to the socket (backpressure for stdin). */
+const drained = async () => {
+  while (pending.length > 0) await Bun.sleep(5)
+}
 
 send({
   type: "run",
@@ -100,7 +128,10 @@ if (process.stdin.isTTY) {
   send({ type: "stdinEnd" })
 } else {
   ;(async () => {
-    for await (const chunk of process.stdin) send({ type: "stdin", data: Buffer.from(chunk).toString("base64") })
+    for await (const chunk of process.stdin) {
+      send({ type: "stdin", data: Buffer.from(chunk).toString("base64") })
+      await drained()
+    }
     send({ type: "stdinEnd" })
   })()
 }

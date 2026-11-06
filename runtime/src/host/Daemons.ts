@@ -39,6 +39,8 @@ interface Running {
   context: Context.Context<never>
   /** Settles once `layer` is built (or fails to build). Commands wait for it. */
   readonly ready: Deferred.Deferred<void, unknown>
+  /** `run` failed; its layer is released and commands are refused. */
+  failed: boolean
 }
 
 /** A daemon's CLI command ran while the daemon wasn't running. */
@@ -214,7 +216,8 @@ export class Daemons extends Context.Service<Daemons, {
             handlers: new Map(),
             shown: false,
             context: Context.empty(),
-            ready: yield* Deferred.make<void, unknown>()
+            ready: yield* Deferred.make<void, unknown>(),
+            failed: false
           }
           running.set(loaded.id, r)
           yield* Effect.logInfo(`Starting daemon ${loaded.id}`)
@@ -229,12 +232,23 @@ export class Daemons extends Context.Service<Daemons, {
             () => Effect.void
           )
           const { layer, run } = loaded.daemon
+          // The layer gets its own scope so a failed `run` releases it right away
+          // (Insomnia's finalizer restores sleep) instead of at host shutdown.
+          const layerScope = yield* Scope.fork(r.scope)
           const main = Effect.gen(function*() {
             // The layer's outputs are erased here; `Daemon.summon` checked them.
-            if (layer) r.context = (yield* Layer.buildWithScope(layer, r.scope)) as Context.Context<never>
+            if (layer) r.context = (yield* Layer.buildWithScope(layer, layerScope)) as Context.Context<never>
             yield* Deferred.succeed(r.ready, undefined)
             yield* Effect.provideContext(run, r.context)
-          }).pipe(Effect.onError((cause) => Deferred.failCause(r.ready, cause)))
+          }).pipe(
+            Effect.onError((cause) =>
+              Effect.gen(function*() {
+                r.failed = true
+                yield* Deferred.failCause(r.ready, cause)
+                if (!Cause.hasInterruptsOnly(cause)) yield* Scope.close(layerScope, Exit.void)
+              })
+            )
+          )
           yield* fork(r, `Daemon ${loaded.daemon.title}`, main, (cause) => showFailure(r, cause))
         })
 
@@ -298,13 +312,17 @@ export class Daemons extends Context.Service<Daemons, {
           const r = running.get(id)
           if (!r) return yield* new DaemonUnavailable({ message: `${id} isn't running` })
           const title = r.loaded.daemon.title
-          yield* Deferred.await(r.ready).pipe(
-            Effect.timeout("15 seconds"),
-            Effect.mapError(() => new DaemonUnavailable({ message: `${title} didn't start (see Open Journal)` }))
-          )
-          if (!live(r)) return yield* new DaemonUnavailable({ message: `${title} stopped` })
+          const stopped = new DaemonUnavailable({ message: `${title} stopped while the command was running` })
+          const ready = yield* Deferred.await(r.ready).pipe(Effect.timeout("15 seconds"), Effect.exit)
+          if (Exit.isFailure(ready) || r.failed) {
+            return yield* new DaemonUnavailable({ message: `${title} isn't running (it failed; see its menu or Open Journal)` })
+          }
+          if (!live(r)) return yield* stopped
           const fiber = yield* effect.pipe(provideDaemon(r), Effect.forkIn(r.scope))
-          return yield* Fiber.join(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)))
+          const exit = yield* Fiber.await(fiber).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber)))
+          // Interrupted, but not by our caller (we'd have stopped above): the daemon went away.
+          if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return yield* stopped
+          return yield* exit
         })
 
       return Daemons.of({ handle, runIn })

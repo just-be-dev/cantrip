@@ -18,7 +18,10 @@ import { SessionManager } from "./session.ts"
 export const parseDuration = (input: string): number | null | undefined => {
   const text = input.trim().toLowerCase()
   if (text === "" || text === "forever" || text === "until-stopped") return null
-  if (/^\d+$/.test(text)) return Number(text) * 60
+  if (/^\d+$/.test(text)) {
+    const seconds = Number(text) * 60
+    return seconds > 0 ? seconds : undefined
+  }
   const match = /^(?:(\d+)h)?(?:(\d+)m)?$/.exec(text)
   if (!match || (match[1] === undefined && match[2] === undefined)) return undefined
   const seconds = Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60

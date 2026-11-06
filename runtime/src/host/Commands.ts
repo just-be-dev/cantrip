@@ -63,6 +63,8 @@ type ClientFrame =
 /** One connected client: buffered writes (Bun sockets can take partial writes) and its stdin. */
 interface Connection {
   buffer: string
+  /** Streaming, so a multi-byte character split across reads survives. */
+  readonly decoder: TextDecoder
   pending: Uint8Array
   closed: boolean
   fiber?: Fiber.Fiber<unknown>
@@ -317,7 +319,9 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
               out(c, 2, `${name}: ${e.message}\n`)
               return 69
             }
-            if (CliError.isCliError(e)) return e._tag === "ShowHelp" && e.errors.length === 0 ? 0 : 2
+            if (CliError.isCliError(e) && e._tag !== "UserError") {
+              return e._tag === "ShowHelp" && e.errors.length === 0 ? 0 : 2
+            }
             // Command.run already printed errors that carry a user message.
             if (typeof e === "object" && e !== null && CliError.getUserMessage(e) !== undefined) return 1
             out(c, 2, `${name}: ${e instanceof Error ? e.message : formatWithOptions({ colors: false }, e)}\n`)
@@ -331,6 +335,9 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
       const services = yield* Effect.context<never>()
       const runFork = Effect.runForkWith(services)
       const runSync = Effect.runSyncWith(services)
+
+      /** Running commands, so shutdown can interrupt them and wait for their finalizers. */
+      const live = new Set<Fiber.Fiber<unknown>>()
 
       const onFrame = (c: Connection, frame: ClientFrame) => {
         switch (frame.type) {
@@ -349,6 +356,9 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
                 Effect.catchCause((cause) => Effect.logError("Command failed", cause))
               )
             )
+            const fiber = c.fiber
+            live.add(fiber)
+            fiber.addObserver(() => live.delete(fiber))
             return
           }
           case "stdin":
@@ -373,11 +383,11 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
             unix: socketPath,
             socket: {
               open: (socket) => {
-                socket.data = { buffer: "", pending: new Uint8Array(), closed: false, socket }
+                socket.data = { buffer: "", decoder: new TextDecoder(), pending: new Uint8Array(), closed: false, socket }
               },
               data: (socket, chunk) => {
                 const c = socket.data
-                c.buffer += chunk.toString()
+                c.buffer += c.decoder.decode(chunk, { stream: true })
                 let newline = c.buffer.indexOf("\n")
                 while (newline >= 0) {
                   const line = c.buffer.slice(0, newline)
@@ -405,6 +415,7 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
         ),
         (server) =>
           Effect.gen(function*() {
+            yield* Fiber.interruptAll(live)
             server.stop(true)
             const now = yield* inode(socketPath)
             if (now !== undefined && now === ours) yield* fs.remove(socketPath).pipe(Effect.ignore)

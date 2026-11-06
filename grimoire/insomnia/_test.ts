@@ -321,6 +321,7 @@ describe("insomnia start durations", () => {
     expect(parseDuration("1h30m")).toBe(5400)
     expect(parseDuration("90")).toBe(5400)
     expect(parseDuration("0m")).toBe(undefined)
+    expect(parseDuration("0")).toBe(undefined)
     expect(parseDuration("soon")).toBe(undefined)
   })
 })
