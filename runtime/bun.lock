@@ -5,11 +5,11 @@
       "name": "@incant/runtime",
       "dependencies": {
         "@effect/platform-bun": "^4.1.2",
+        "@types/bun": "^1.4.4",
         "effect": "^4.1.2",
       },
       "devDependencies": {
         "@effect/tsgo": "^0.67.3",
-        "@types/bun": "^1.4.4",
         "typescript": "7.0.2",
       },
     },

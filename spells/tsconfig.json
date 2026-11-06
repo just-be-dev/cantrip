@@ -1,8 +1,7 @@
 {
+  "//": "Repo-only: lets the example spells typecheck against ../runtime. Users' spell dirs get a generated tsconfig and node_modules links instead.",
   "compilerOptions": {
-    "lib": [
-      "ESNext"
-    ],
+    "lib": ["ESNext"],
     "target": "ESNext",
     "module": "Preserve",
     "moduleDetection": "force",
@@ -13,8 +12,11 @@
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
-    "types": [
-      "bun"
-    ]
+    "types": ["bun"],
+    "typeRoots": ["../runtime/node_modules/@types"],
+    "paths": {
+      "incant": ["../runtime/src/sdk/index.ts"],
+      "effect/*": ["../runtime/node_modules/effect/dist/*.d.ts"]
+    }
   }
 }

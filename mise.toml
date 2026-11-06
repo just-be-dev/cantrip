@@ -1,0 +1,33 @@
+[tools]
+bun = "1.4"
+
+[tasks.install]
+description = "Install runtime dependencies"
+dir = "runtime"
+run = "bun install"
+
+[tasks.dev]
+description = "Run Incant from source and show the bar on launch (Ctrl-C to quit)"
+dir = "app"
+env = { INCANT_SHOW_ON_LAUNCH = "1" }
+run = "swift run Incant"
+
+[tasks.host]
+description = "Run the spell host alone; type protocol JSON on stdin"
+dir = "runtime"
+run = "bun src/host/main.ts"
+
+[tasks.typecheck]
+description = "Typecheck the runtime and example spells"
+run = [
+  "cd runtime && bun run typecheck",
+  "cd spells && ../runtime/node_modules/.bin/tsc --noEmit -p .",
+]
+
+[tasks.build]
+description = "Build build/Incant.app"
+run = "scripts/bundle.sh"
+
+[tasks.install-app]
+description = "Build, copy to ~/Applications, and launch"
+run = "scripts/bundle.sh --install"

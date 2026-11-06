@@ -61,7 +61,7 @@ export class Registry extends Context.Service<Registry, {
         yield* fs.makeDirectory(dir, { recursive: true })
         if (yield* fs.exists(examples)) {
           for (const name of yield* fs.readDirectory(examples)) {
-            if (name === "node_modules" || name.startsWith(".")) continue
+            if (name === "node_modules" || name === "tsconfig.json" || name.startsWith(".")) continue
             yield* fs.copy(path.join(examples, name), path.join(dir, name))
           }
         }
@@ -118,7 +118,12 @@ export class Registry extends Context.Service<Registry, {
         const next = new Map<string, LoadedSpell>()
         const errors: Array<string> = []
         for (const entry of yield* entries()) {
-          const loaded = yield* Effect.tryPromise(() => import(`${entry.file}?v=${generation}`)).pipe(
+          // Resolve first: Bun 1.3.14 can't dynamically import a file created after
+          // the process started unless the resolver has looked it up. The `?v=`
+          // query busts the module cache so edits are picked up.
+          const loaded = yield* Effect.tryPromise(() =>
+            import(`${Bun.resolveSync(entry.file, dir)}?v=${generation}`)
+          ).pipe(
             Effect.map((mod: Record<string, unknown>) => mod),
             Effect.catch((error) => {
               errors.push(`${entry.id}: ${String(error.cause)}`)
