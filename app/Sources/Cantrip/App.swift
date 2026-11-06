@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 @main
 @MainActor
@@ -42,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         registerHotKey()
+        enableLoginItemOnFirstRun()
         installStatusItem()
 
         if ProcessInfo.processInfo.environment["CANTRIP_SHOW_ON_LAUNCH"] != nil { panel.show() }
@@ -72,6 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Open Spells Folder", action: #selector(openSpells), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Host Log", action: #selector(openLog), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        let login = menu.addItem(withTitle: "Launch at Login", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
+        login.target = self
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Cantrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
         statusItem = item
@@ -82,4 +88,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func restartHost() { host.restart() }
     @objc private func openSpells() { NSWorkspace.shared.open(CantripConfig.spellsDirectory) }
     @objc private func openLog() { NSWorkspace.shared.open(host.logURL) }
+
+    @objc private func toggleLoginItem(_ sender: NSMenuItem) {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled { try service.unregister() } else { try service.register() }
+        } catch {
+            NSLog("Cantrip: login item change failed: \(error)")
+        }
+        sender.state = service.status == .enabled ? .on : .off
+    }
+
+    /// A launcher should be there after a reboot, so the installed app turns this on once.
+    /// Skipped for `swift run` builds, which aren't in an app bundle.
+    private func enableLoginItemOnFirstRun() {
+        let key = "didSetUpLoginItem"
+        guard Bundle.main.bundleURL.pathExtension == "app", !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        do {
+            try SMAppService.mainApp.register()
+        } catch {
+            NSLog("Cantrip: could not register login item: \(error)")
+        }
+    }
 }
