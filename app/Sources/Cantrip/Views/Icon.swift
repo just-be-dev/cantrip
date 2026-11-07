@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A spell icon string: an SF Symbol name, an emoji, or a file path (Finder icon).
 enum Icon: Hashable {
     case symbol(String)
     case emoji(String)
     case file(String)
+    /// The system icon for a UTType identifier (System Settings uses these for some panes).
+    case contentType(String)
 
     init(_ raw: String?) {
         guard let raw, !raw.isEmpty else {
@@ -32,6 +35,14 @@ private enum FileIconCache {
         images[path] = image
         return image
     }
+
+    static func image(type identifier: String) -> NSImage {
+        let key = "type:\(identifier)"
+        if let cached = images[key] { return cached }
+        let image = NSWorkspace.shared.icon(for: UTType(identifier) ?? .data)
+        images[key] = image
+        return image
+    }
 }
 
 struct IconView: View {
@@ -51,6 +62,10 @@ struct IconView: View {
                 .frame(width: size, height: size)
         case let .file(path):
             Image(nsImage: FileIconCache.image(path))
+                .resizable()
+                .frame(width: size, height: size)
+        case let .contentType(identifier):
+            Image(nsImage: FileIconCache.image(type: identifier))
                 .resizable()
                 .frame(width: size, height: size)
         }

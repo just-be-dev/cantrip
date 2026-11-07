@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.start()
 
         Task { store.apps = await AppCatalog.scan() }
+        Task { store.settings = await SettingsCatalog.scan() }
         // Pick up newly installed apps whenever the bar is opened after a while.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main

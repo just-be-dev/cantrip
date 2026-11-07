@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class DaemonBar {
@@ -111,6 +112,11 @@ final class DaemonStatusItem: NSObject, NSMenuDelegate {
                 image.size = NSSize(width: 18, height: 18)
                 button.image = image
                 button.title = label
+            case let .contentType(identifier):
+                let image = NSWorkspace.shared.icon(for: UTType(identifier) ?? .data)
+                image.size = NSSize(width: 18, height: 18)
+                button.image = image
+                button.title = label
             }
         }
         button.imagePosition = button.title.isEmpty ? .imageOnly : .imageLeading
@@ -182,6 +188,10 @@ final class DaemonStatusItem: NSObject, NSMenuDelegate {
             }
         case let .file(path):
             let image = NSWorkspace.shared.icon(forFile: path)
+            image.size = NSSize(width: 16, height: 16)
+            return image
+        case let .contentType(identifier):
+            let image = NSWorkspace.shared.icon(for: UTType(identifier) ?? .data)
             image.size = NSSize(width: 16, height: 16)
             return image
         }

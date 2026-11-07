@@ -18,6 +18,7 @@ struct ActionItem: Identifiable {
         case wire(WireAction)
         case runSpell(WireCommand)
         case launchApp(AppEntry)
+        case openSettings(SettingsPane)
         case revealInFinder(String)
         case copyText(String)
         case builtin(Builtin)
@@ -101,6 +102,7 @@ final class Store {
     var commands: [WireCommand] = []
     var loadErrors: [String] = []
     var apps: [AppEntry] = []
+    var settings: [SettingsPane] = []
     /// Each running daemon's menu bar item, by daemon id. Its menu actions are searchable too.
     var daemons: [String: WireStatusItem] = [:]
     var session: Session?
@@ -222,6 +224,17 @@ final class Store {
                 ])
             candidates.append((row, [app.name], usage[row.id] ?? 0))
         }
+        for pane in settings {
+            let row = Row(
+                id: "settings:\(pane.path)", title: pane.name, subtitle: nil,
+                icon: pane.iconType.map(Icon.contentType) ?? .file(pane.path),
+                accessories: ["System Settings"],
+                actions: [
+                    ActionItem(id: "open", title: "Open Settings", icon: "gearshape", kind: .openSettings(pane)),
+                    ActionItem(id: "copy-link", title: "Copy Link", icon: "link", kind: .copyText(pane.target)),
+                ])
+            candidates.append((row, [pane.name] + pane.aliases, usage[row.id] ?? 0))
+        }
         for (daemon, status) in daemons.sorted(by: { $0.key < $1.key }) {
             for (path, item) in Self.menuActions(status.menu) {
                 let title = path.joined(separator: " › ")
@@ -267,6 +280,10 @@ final class Store {
         case let .launchApp(app):
             bumpUsage("app:\(app.path)")
             NSWorkspace.shared.openApplication(at: URL(filePath: app.path), configuration: .init())
+            hidePanel()
+        case let .openSettings(pane):
+            bumpUsage("settings:\(pane.path)")
+            open(pane.target)
             hidePanel()
         case let .revealInFinder(path):
             NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)])
