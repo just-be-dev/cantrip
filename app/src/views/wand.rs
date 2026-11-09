@@ -20,7 +20,7 @@ mod sparkle;
 pub mod spells;
 
 use std::cell::Cell;
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
+use std::f32::consts::{FRAC_PI_4, TAU};
 use std::time::Duration;
 
 use rune::{Color, El, Pixels, Span, Transition, Tx, el};
@@ -234,6 +234,8 @@ impl Wand {
         el().absolute(inset, inset)
             .size(CANVAS, CANVAS)
             .pixels(&self.pixels)
+            // It takes over from the flying wand in place: no fade in.
+            .transition(Transition::none())
             .inert()
             .a11y_hidden()
     }
@@ -511,36 +513,24 @@ impl Wand {
         };
         let raw = (t - began) as f32;
         let s = raw.max(0.0);
-        // It pops in, growing and swinging upright with a quarter turn, and is at rest exactly
-        // as it casts the bar (so the bar grows from where its tip is: `hero_tip`). It flies
-        // home, and the rock eases in once it's there.
-        let k = ease_out(s / CAST);
         let rock = ROCK * (TAU * (s - LAND) / ROCK_PERIOD).sin() * smoothstep(LAND, LAND + 0.8, s);
-        // The tip star is out until the start, blooms as it casts the bar, flashes as it
-        // lands, then breathes.
+        // The tip star: a glow that blooms as the wand comes in pointing at you, which the bar
+        // grows out of; it cools as the wand flies, flashes as it lands, then breathes.
         let star = if raw < 0.0 {
             0.0
-        } else if s < CAST - 0.04 {
-            0.5
-        } else if s < CAST + 0.04 {
-            lerp(0.5, 1.6, ease_out((s - (CAST - 0.04)) / 0.08))
+        } else if s < CAST {
+            lerp(0.0, 2.4, ease_out(s / CAST))
         } else if s < LAND {
-            lerp(
-                1.6,
-                1.0,
-                ease_in_out((s - (CAST + 0.04)) / (LAND - CAST - 0.04)),
-            )
+            lerp(2.4, 1.0, ease_in_out((s - CAST) / (LAND - CAST)))
         } else {
             1.0 + 0.4 * flare(s - LAND) + (breathe(s) - 1.0) * smoothstep(LAND, LAND + 0.5, s)
         };
         Stance {
-            turn: -FRAC_PI_2 * (1.0 - k) + rock,
-            swing: lerp(0.6, 0.0, k),
-            grow: lerp(0.5, 1.0, k) - 1.0,
             star: star - 1.0,
             // The orbiting stars spiral out from the shaft as it comes in.
             reach: ease_out(s / 0.3) - 1.0,
-            ..Stance::default()
+            turn: rock,
+            ..opening_stance(s)
         }
     }
 
@@ -601,33 +591,80 @@ impl Wand {
     }
 }
 
+/// How the wand is turned `s` seconds into the opening. It comes in pointing at you (`AIM`),
+/// so it's mostly its glowing tip, and holds that as it casts the bar. Then it turns to point
+/// along its way home and flies tip first; slowing as it arrives, it swings into its resting
+/// diagonal, a little past and back, like a spring.
+fn opening_stance(s: f32) -> Stance {
+    // Growing in as it comes.
+    let grow = lerp(0.6, 1.0, ease_out(s / CAST)) - 1.0;
+    let heading = heading();
+    // Facing you → pointing along the way home.
+    let k = ease_in_out((s - CAST) / (TURN_AT - CAST));
+    let (mut swing, pitch) = (lerp(AIM.0, heading, k), lerp(AIM.1, 0.0, k));
+    // Arriving: a damped swing into rest.
+    let u = s - SETTLE_AT;
+    if u > 0.0 {
+        let ease = smoothstep(0.0, 0.06, u);
+        let spring = heading * (-9.0 * u).exp() * (13.0 * u).cos();
+        swing = lerp(heading, spring, ease);
+    }
+    // A little bank as it travels.
+    let flight = ((s - FLY) / (LAND - FLY)).clamp(0.0, 1.0);
+    Stance {
+        swing,
+        pitch,
+        grow,
+        turn: 0.35 * (std::f32::consts::PI * flight).sin(),
+        ..Stance::default()
+    }
+}
+
+/// Pointing at you: (swing, pitch) that turn the tip toward the viewer, the shaft
+/// foreshortened behind it but not quite end-on, so it still reads as a wand.
+const AIM: (f32, f32) = (FRAC_PI_4, 1.25 - TILT);
+/// It has turned to its heading by here, and starts swinging into rest here.
+const TURN_AT: f32 = CAST + 0.12;
+const SETTLE_AT: f32 = LAND - 0.14;
+
+/// The swing that points the tip from `HERO` toward its slot, as drawn (y up, the shaft leaning
+/// out by `TILT`).
+fn heading() -> f32 {
+    let home = super::WAND_CENTER;
+    let (dx, dy) = (home[0] - HERO[0], HERO[1] - home[1]);
+    (-dx).atan2(dy / TILT.cos()) + FRAC_PI_4
+}
+
 /// Where the wand's canvas is centred (window points) and how large the wand is, `s` seconds
-/// into the opening: at `HERO` until `FLY`, then swooping up and over into its slot.
+/// into the opening: at `HERO` until `FLY`, then straight along the vector to its slot,
+/// shrinking as it goes.
 fn placement(s: f32) -> ([f32; 2], f32) {
     let home = super::WAND_CENTER;
     let k = ease_in_out(((s - FLY) / (LAND - FLY)).clamp(0.0, 1.0));
-    let bend = [home[0] + 0.6 * (HERO[0] - home[0]), home[1] - 40.0];
-    let m = 1.0 - k;
-    let at = |i: usize| m * m * HERO[i] + 2.0 * m * k * bend[i] + k * k * home[i];
-    ([at(0), at(1)], lerp(HERO_ZOOM, 1.0, k))
+    (
+        [lerp(HERO[0], home[0], k), lerp(HERO[1], home[1], k)],
+        lerp(HERO_ZOOM, 1.0, k),
+    )
 }
 
-/// The tip at rest, in points from the canvas's centre at the slot's size.
-const REST_TIP: [f32; 2] = [9.88, -8.98];
+/// The tip as the wand casts the bar (pointing at you), in points from the canvas's centre at
+/// the slot's size.
+const CAST_TIP: [f32; 2] = [-0.85, -4.3];
 
-/// Where the tip is as the wand casts the bar, in window points: the bar grows from here.
+/// Where the tip's glow is as the wand casts the bar, in window points: the bar grows from here.
 pub fn hero_tip() -> [f32; 2] {
     [
-        HERO[0] + REST_TIP[0] * HERO_ZOOM,
-        HERO[1] + REST_TIP[1] * HERO_ZOOM,
+        HERO[0] + CAST_TIP[0] * HERO_ZOOM,
+        HERO[1] + CAST_TIP[1] * HERO_ZOOM,
     ]
 }
 
 impl Wand {
-    /// The tip at rest, measured from the model (`REST_TIP` keeps it as a constant).
+    /// The tip as it casts the bar, measured from the model (`CAST_TIP` keeps it as a
+    /// constant).
     #[cfg(test)]
-    fn rest_tip() -> [f32; 2] {
-        let w = Pose::new(Stance::default(), 0.0).place(TIP);
+    fn cast_tip() -> [f32; 2] {
+        let w = Pose::new(opening_stance(CAST), 0.0).place(TIP);
         let z = DISTANCE - w[2];
         let focal = PT_PER_UNIT * DISTANCE;
         [focal * w[0] / z, -focal * w[1] / z]
@@ -785,13 +822,13 @@ mod tests {
 
     #[test]
     fn the_bar_grows_from_where_the_tip_is() {
-        let tip = Wand::rest_tip();
-        let kept = super::REST_TIP;
+        let tip = Wand::cast_tip();
+        let kept = super::CAST_TIP;
         assert!(
             (tip[0] - kept[0]).abs() < 0.5 && (tip[1] - kept[1]).abs() < 0.5,
-            "REST_TIP is {kept:?}, the model's tip is {tip:?}"
+            "CAST_TIP is {kept:?}, the model's tip is {tip:?}"
         );
-        // And the wand is at rest as it casts the bar.
+        // And that's where it is as it casts the bar.
         let mut wand = Wand::new();
         run(&mut wand, 0.0, super::CAST as f64, "");
         let t = wand.tip;
@@ -848,15 +885,45 @@ mod tests {
     }
 
     #[test]
-    fn the_tip_blooms_as_it_casts_the_bar() {
+    fn it_starts_as_a_glow_pointing_at_you_then_aims_home() {
         let mut wand = Wand::new();
-        run(&mut wand, 0.0, 0.05, "");
-        let before = wand.stance.star;
-        run(&mut wand, 0.05, (super::CAST + 0.04) as f64, "");
+        run(&mut wand, 0.0, 0.0, "");
+        let start = wand.stance.star;
+        run(&mut wand, 0.0, super::CAST as f64, "");
         assert!(
-            wand.stance.star > before + 0.8,
-            "{before} → {}",
+            wand.stance.star > start + 1.5,
+            "the glow blooms: {start} → {}",
             wand.stance.star
+        );
+        assert!(
+            wand.stance.pitch > 0.8,
+            "pointing at you: {:?}",
+            wand.stance
+        );
+        run(
+            &mut wand,
+            super::CAST as f64,
+            (super::TURN_AT + 0.02) as f64,
+            "",
+        );
+        let heading = super::heading();
+        assert!(
+            (wand.stance.swing - heading).abs() < 0.05 && wand.stance.pitch.abs() < 0.05,
+            "then along the way home: {:?}",
+            wand.stance
+        );
+        // The tip leads: it points the way the wand is going.
+        let (from, _) = super::placement(super::FLY);
+        let (to, _) = super::placement(super::LAND);
+        let tip = wand.tip;
+        let way = [to[0] - from[0], to[1] - from[1]];
+        let along = tip[0] * way[0] + tip[1] * way[1];
+        assert!(along > 0.0, "tip {tip:?} leads along {way:?}");
+        run(&mut wand, (super::TURN_AT + 0.02) as f64, 1.2, "");
+        assert!(
+            wand.stance.swing.abs() < 0.02,
+            "and settles into rest: {:?}",
+            wand.stance
         );
     }
 
