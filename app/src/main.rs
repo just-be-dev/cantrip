@@ -25,7 +25,7 @@ mod views;
 
 use std::time::{Duration, Instant};
 
-use rune::{App, AppHandle, AppSpec, KeyEvent, OverlaySpec, ScreenEdge, Tx, WindowOptions};
+use rune::{App, AppHandle, AppSpec, FrameOutcome, KeyEvent, OverlaySpec, ScreenEdge, Tx, WindowOptions};
 
 use crate::config::Config;
 use crate::platform::statusbar::{DaemonBar, DaemonEvent, MainCommand, MainItem, MainMenuSpec};
@@ -89,6 +89,7 @@ fn main() {
     let handle = app.handle();
     let (me, ready) = (handle.clone(), handle.clone());
     let started = std::cell::Cell::new(false);
+    let revealer = handle.clone();
     let ready_config = config.clone();
     app.init(move || {
         let live = rune::tooling::headless_run().is_none();
@@ -101,10 +102,21 @@ fn main() {
         };
         Cantrip::new(services)
     })
+    // The first frame drawn after the panel has the keyboard is the first one anyone sees:
+    // start the intro there.
+    .on_frame_encoded(move |frame| {
+        if frame.outcome() == FrameOutcome::Drawn && store::AWAITING_FRAME.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            revealer.update(|s, _| {
+                if s.visible && !s.revealed {
+                    s.reveal();
+                }
+            });
+        }
+    })
     .global_shortcut(&config.hotkey, |s, tx| {
         s.toggle_panel();
         // The intro starts when the panel has the keyboard; this wakes the fallback in `tick`.
-        tx.wake_after(Duration::from_millis(300));
+        tx.wake_after(store::REVEAL_FALLBACK + Duration::from_millis(50));
     })
     .on_ready(move |_| {
         if started.replace(true) {

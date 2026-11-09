@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use rune::{Key, KeyEvent, TextEdit, Tx};
@@ -13,6 +14,11 @@ use crate::fuzzy;
 use crate::icons::Icon;
 use crate::protocol::*;
 use crate::services::Services;
+
+/// Set while a shown panel waits for its first drawn frame to start the intro.
+pub static AWAITING_FRAME: AtomicBool = AtomicBool::new(false);
+/// Play the intro anyway if no frame or keyboard arrives by then (another app kept focus).
+pub const REVEAL_FALLBACK: Duration = Duration::from_millis(600);
 
 /// Reopening the bar after this long starts fresh at the root search (like Raycast).
 pub const FRESH_AFTER: Duration = Duration::from_secs(90);
@@ -768,7 +774,13 @@ impl Cantrip {
     pub fn focus_changed(&mut self, focused: bool) {
         self.focused = focused;
         if focused && self.visible && !self.revealed {
-            self.reveal();
+            if self.services.live {
+                // The window's first visible frame comes a few hundred ms after the keyboard
+                // does; `main` reveals on it, so the intro isn't spent while nobody can see it.
+                AWAITING_FRAME.store(true, Ordering::Relaxed);
+            } else {
+                self.reveal();
+            }
         } else if !focused && self.visible && !self.services.keep_open {
             self.hide_panel();
         }
@@ -776,6 +788,7 @@ impl Cantrip {
 
     /// Play the intro.
     pub fn reveal(&mut self) {
+        AWAITING_FRAME.store(false, Ordering::Relaxed);
         self.revealed = true;
         self.intro += 1;
         self.intro_rows = true;
@@ -794,7 +807,7 @@ impl Cantrip {
     /// Timers: toasts and the HUD go away by themselves. True when something visible changed.
     pub fn tick(&mut self, now: Instant) -> bool {
         // Shown but the keyboard never arrived (another app kept it): play the intro anyway.
-        if self.visible && !self.revealed && self.shown_at.is_some_and(|at| now.duration_since(at) > Duration::from_millis(250)) {
+        if self.visible && !self.revealed && self.shown_at.is_some_and(|at| now.duration_since(at) > REVEAL_FALLBACK) {
             self.reveal();
             return true;
         }
