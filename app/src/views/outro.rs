@@ -1,8 +1,10 @@
 //! The bar's exit: the glass blurs, swells a little and fades, while stardust lifts off it and
 //! drifts up and outward past its edges. The window hides once it's gone (`OUTRO`).
 //!
-//! A sequence can only scale and fade, so each mote rides its own panel-sized layer scaled about
-//! a point below the panel's centre: scaling that layer carries the mote up and away.
+//! A sequence can only scale and fade, so each mote scales about a point below the panel's
+//! centre, far outside itself (`origin` beyond 0..1): scaling carries it up and away. The mote is
+//! a single childless element carrying its own sequence: a fading element with children is
+//! drawn into an offscreen layer of its own, and 72 panel-sized ones a frame made the exit stutter.
 
 use std::time::Duration;
 
@@ -88,27 +90,27 @@ impl Outro {
                 Color::WHITE,
                 p.cool.mix(Color::WHITE, 0.3),
             ][i % 4];
-            // How far it travels: its layer's end scale, about a point under the panel.
+            // How far it travels: its end scale, about a point under the panel.
             let drift = [NEAR, MID, FAR][(noise(i, 4) * 2.99) as usize];
-            let mote = el()
-                .absolute(mx - dot / 2.0, my - dot / 2.0)
-                .size(dot, dot)
-                .radius(dot / 2.0)
-                .fill(color)
-                .box_shadow(Shadow {
-                    x: 0.0,
-                    y: 0.0,
-                    blur: 6.0 + dot * 2.0,
-                    spread: 0.5,
-                    color: color.alpha(0.85),
-                    inset: false,
-                });
+            // Where it scales from: a point on the panel's vertical centre line, below the
+            // middle, in units of the mote's own size.
+            let (left, top) = (x + mx - dot / 2.0, y + my - dot / 2.0);
+            let pivot = (x + 0.5 * w, y + (0.5 + noise(i, 5) * 0.6) * h);
             layer = layer.child(
-                el().absolute(x, y)
-                    .size(w, h)
-                    .origin(0.5, 0.5 + noise(i, 5) * 0.6)
-                    .sequence(self.at(drift, noise(i, 6) as f64 * 0.12))
-                    .child(mote),
+                el().absolute(left, top)
+                    .size(dot, dot)
+                    .radius(dot / 2.0)
+                    .fill(color)
+                    .box_shadow(Shadow {
+                        x: 0.0,
+                        y: 0.0,
+                        blur: 6.0 + dot * 2.0,
+                        spread: 0.5,
+                        color: color.alpha(0.85),
+                        inset: false,
+                    })
+                    .origin((pivot.0 - left) / dot, (pivot.1 - top) / dot)
+                    .sequence(self.at(drift, noise(i, 6) as f64 * 0.12)),
             );
         }
         layer

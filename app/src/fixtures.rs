@@ -15,6 +15,7 @@ pub const SCENES: &[Scene] = &[
     ("root-arcane", root_arcane),
     ("opening-arcane", opening_arcane),
     ("closing", closing),
+    ("closing-arcane", closing_arcane),
     ("query", query),
     ("empty", empty),
     ("actions", actions),
@@ -159,6 +160,12 @@ fn closing(s: &mut Cantrip) {
     s.revealed = false;
     s.closing = true;
     s.outro = 1;
+}
+
+/// The exit in the Arcane theme: the glass disperses into stardust.
+fn closing_arcane(s: &mut Cantrip) {
+    closing(s);
+    s.set_theme(crate::views::theme::Theme::Arcane);
 }
 
 fn query(s: &mut Cantrip) {
