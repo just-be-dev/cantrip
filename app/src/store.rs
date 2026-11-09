@@ -14,6 +14,7 @@ use crate::fuzzy;
 use crate::icons::Icon;
 use crate::protocol::*;
 use crate::services::Services;
+use crate::views::theme::Theme;
 use crate::views::wand::{Gesture, Signals, Wand};
 
 /// Set while a shown panel waits for its first drawn frame to start the intro.
@@ -91,14 +92,18 @@ pub enum Builtin {
     OpenGrimoire,
     OpenJournal,
     Quit,
+    /// Switch the bar's magic to a theme.
+    UseTheme(Theme),
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 5] = [
+    pub const ALL: [Builtin; 7] = [
         Builtin::ReloadGrimoire,
         Builtin::RestartHost,
         Builtin::OpenGrimoire,
         Builtin::OpenJournal,
+        Builtin::UseTheme(Theme::Sigil),
+        Builtin::UseTheme(Theme::Arcane),
         Builtin::Quit,
     ];
 
@@ -109,6 +114,8 @@ impl Builtin {
             Builtin::OpenGrimoire => "openGrimoire",
             Builtin::OpenJournal => "openJournal",
             Builtin::Quit => "quit",
+            Builtin::UseTheme(Theme::Sigil) => "theme:sigil",
+            Builtin::UseTheme(Theme::Arcane) => "theme:arcane",
         }
     }
 
@@ -122,6 +129,7 @@ impl Builtin {
             Builtin::OpenGrimoire => "Your spells folder",
             Builtin::OpenJournal => "The host's log",
             Builtin::Quit => "Close Cantrip",
+            Builtin::UseTheme(t) => t.describe(),
         }
     }
 
@@ -132,6 +140,8 @@ impl Builtin {
             Builtin::OpenGrimoire => "Open Grimoire",
             Builtin::OpenJournal => "Open Journal",
             Builtin::Quit => "Quit Cantrip",
+            Builtin::UseTheme(Theme::Sigil) => "Sigil Theme",
+            Builtin::UseTheme(Theme::Arcane) => "Arcane Theme",
         }
     }
 
@@ -143,6 +153,8 @@ impl Builtin {
             Builtin::OpenGrimoire => "books.vertical",
             Builtin::OpenJournal => "scroll",
             Builtin::Quit => "power",
+            Builtin::UseTheme(Theme::Sigil) => "seal",
+            Builtin::UseTheme(Theme::Arcane) => "sparkles",
         }
     }
 }
@@ -232,6 +244,8 @@ pub struct Cantrip {
     pub scroll: Rc<Cell<ScrollWatch>>,
     /// The 3D wand in the search bar, drawn on the frame clock (`animate_wand`).
     pub wand: Wand,
+    /// How the bar's magic looks (`views::theme`).
+    pub theme: Theme,
     /// Where the last glide is headed and when it was asked for: key repeat asks again before
     /// the list gets there, so the next step starts from where it's going.
     scroll_target: Option<(f32, Instant)>,
@@ -247,6 +261,7 @@ impl Cantrip {
         let mut field = TextEdit::new("");
         field.focused = true;
         let usage = services.load_usage();
+        let theme = services.load_theme().unwrap_or_default();
         Cantrip {
             commands: Vec::new(),
             load_errors: Vec::new(),
@@ -272,6 +287,7 @@ impl Cantrip {
             shown_at: None,
             scroll: Rc::default(),
             wand: Wand::new(),
+            theme,
             scroll_target: None,
             root_query: String::new(),
             root_selection: 0,
@@ -318,7 +334,7 @@ impl Cantrip {
                 });
             }
         } else {
-            self.wand.edited(&self.root_query, &text);
+            self.wand.edited(&self.root_query, &text, self.theme);
             self.root_query = text;
             self.root_selection = 0;
         }
@@ -682,7 +698,19 @@ impl Cantrip {
                 self.hide_panel();
             }
             Builtin::Quit => tx.quit(),
+            Builtin::UseTheme(theme) => {
+                self.set_theme(theme);
+                self.services.save_theme(theme);
+                let title = format!("{} theme", theme.title());
+                self.show_toast(ToastStyle::Success, &title, None, tx);
+            }
         }
+    }
+
+    /// The bar's magic. The wand draws afresh in it on its next frame.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        self.changed();
     }
 
     fn run(&mut self, command: WireCommand) {
@@ -748,7 +776,7 @@ impl Cantrip {
     pub fn copy(&mut self, text: String, tx: &mut Tx) {
         tx.copy(text);
         self.hide_panel();
-        self.services.hud("Copied to clipboard");
+        self.services.hud("Copied to clipboard", self.theme);
     }
 
     fn bump_usage(&mut self, key: &str) {
@@ -875,6 +903,7 @@ impl Cantrip {
         let fizzled =
             self.session.is_none() && !self.root_query.is_empty() && self.rows().is_empty();
         let signals = Signals {
+            theme: self.theme,
             shown,
             intro: self.intro,
             query: &self.root_query,
@@ -1101,7 +1130,7 @@ impl Cantrip {
             } => self.show_toast(style, &title, message, tx),
             HostMessage::Hud { message } => {
                 self.hide_panel();
-                self.services.hud(&message);
+                self.services.hud(&message, self.theme);
             }
             HostMessage::Hide => self.hide_panel(),
             HostMessage::Clipboard { text } => tx.copy(text),
@@ -1134,7 +1163,7 @@ impl Cantrip {
                     s.awaiting_push = false;
                 } else {
                     eprintln!("Cantrip: {title}\n{message}");
-                    self.services.hud(&format!("⚠︎ {title}"));
+                    self.services.hud(&format!("⚠︎ {title}"), self.theme);
                 }
             }
         }

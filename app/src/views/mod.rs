@@ -1,10 +1,12 @@
-//! The bar, drawn with Rune in the Arcane look (`palette.rs`): search field over an aurora,
-//! results or a spell's view, footer, and ⌘K actions.
+//! The bar, drawn with Rune in the theme's look (`theme.rs`, `palette.rs`): search field over an
+//! aurora, results or a spell's view, footer, and ⌘K actions.
 
 pub mod hud;
 pub mod intro;
 pub mod outro;
 pub mod palette;
+pub mod runes;
+pub mod theme;
 pub mod wand;
 
 use std::f32::consts::{FRAC_PI_2, PI};
@@ -21,6 +23,7 @@ use crate::store::{Cantrip, Row, ScrollWatch, row_key};
 use intro::Intro;
 use outro::Outro;
 use palette::Palette;
+use theme::Theme;
 
 pub const PANEL_SIZE: (f32, f32) = (760.0, 480.0);
 pub const RADIUS: f32 = 16.0;
@@ -76,13 +79,13 @@ fn font(size: f32, weight: f32) -> TextStyle {
 /// Small caps-ish labels: section headers, metadata labels.
 fn eyebrow(label: &str, look: Look) -> El {
     text(label.to_uppercase())
-        .font(font(10.5, 650.0).tracking(1.1))
+        .font(look.p.label_style())
         .color(look.p.faint)
 }
 
 pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
     let look = Look {
-        p: palette::arcane(),
+        p: s.theme.palette(),
         scale: cx.env().scale,
         intro: Intro::new(s.intro).filter(|_| s.revealed),
     };
@@ -93,8 +96,11 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         .h_full()
         .padding(MARGIN)
         .child(panel(s, look));
-    if let Some(intro) = look.intro {
-        // Thrown from the wand's tip as it casts the bar.
+    if let Some(intro) = look.intro
+        && s.theme == Theme::Arcane
+    {
+        // Thrown from the wand's tip as it casts the bar. (Sigil inscribes a sigil instead:
+        // the wand draws it, `hero_view`.)
         let tip = wand::hero_tip();
         root = root.child(intro.burst(tip[0], tip[1], p));
     }
@@ -111,7 +117,11 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         root = root.child(spells);
     }
     if s.closing {
-        root = root.child(Outro::new(s.outro).dust(MARGIN, MARGIN, PANEL_SIZE, p));
+        root = root.child(match s.theme {
+            Theme::Arcane => Outro::new(s.outro).dust(MARGIN, MARGIN, PANEL_SIZE, p),
+            // A seal closes over the wand as the glass goes.
+            Theme::Sigil => Outro::new(s.outro).seal(WAND_CENTER[0], WAND_CENTER[1], p),
+        });
     }
     root
 }
@@ -127,18 +137,19 @@ fn panel(s: &Cantrip, look: Look) -> El {
         .continuous_corners()
         .clip_rounded(RADIUS)
         .fill(p.bg)
-        .border_gradient(1.0, Color::WHITE.alpha(0.20), Color::WHITE.alpha(0.05))
+        .border_gradient(1.0, p.edge.0, p.edge.1)
         .box_shadow(Shadow {
             x: 0.0,
             y: 0.0,
             blur: 60.0,
             spread: -10.0,
-            color: p.violet.alpha(0.16),
+            color: p.glow.alpha(0.16 * p.radiance),
             inset: true,
         })
         // The search field keeps the keyboard whatever is clicked (rows, actions, back).
         .preserve_focus_on_press(true)
         .child(aurora(look))
+        .child(frame(look))
         .child(search_bar(s, look))
         .child(loading_bar(loading, look))
         .child(glow_rule(look))
@@ -176,7 +187,7 @@ fn panel(s: &Cantrip, look: Look) -> El {
             y: 0.0,
             blur: 40.0,
             spread: -8.0,
-            color: p.violet.alpha(0.3),
+            color: p.glow.alpha(0.3 * p.radiance),
             inset: false,
         })
         // Dispersing, the glass goes soft as it fades.
@@ -227,14 +238,53 @@ fn aurora(look: Look) -> El {
                 ],
             )
     };
+    // Arcane pools violet and magenta at the top and a cool wash at the bottom; Sigil, only a
+    // breath of dusk violet over the search.
+    let pools = match p.theme {
+        Theme::Arcane => [(p.glow, 0.34), (p.glow2, 0.20), (p.cool, 0.09)],
+        Theme::Sigil => [(p.glow2, 0.14), (p.glow, 0.05), (p.cool, 0.05)],
+    };
     el().key("aurora")
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .a11y_hidden()
         // Ink over the blur, so what's behind reads as light, not as text.
         .fill(p.bg.alpha(0.84))
-        .child(pool(0, [0.12, -0.05], [460.0, 210.0], p.violet, 0.34))
-        .child(pool(1, [0.78, -0.10], [420.0, 170.0], p.magenta, 0.20))
-        .child(pool(2, [0.55, 1.08], [520.0, 160.0], p.cyan, 0.09))
+        .child(pool(
+            0,
+            [0.12, -0.05],
+            [460.0, 210.0],
+            pools[0].0,
+            pools[0].1,
+        ))
+        .child(pool(
+            1,
+            [0.78, -0.10],
+            [420.0, 170.0],
+            pools[1].0,
+            pools[1].1,
+        ))
+        .child(pool(
+            2,
+            [0.55, 1.08],
+            [520.0, 160.0],
+            pools[2].0,
+            pools[2].1,
+        ))
+}
+
+/// Sigil's hairline frame, inset in the glass like a manuscript's.
+fn frame(look: Look) -> El {
+    match look.p.frame {
+        Some(color) => el()
+            .key("frame")
+            .a11y_hidden()
+            .inert()
+            .pin(Some(5.0), Some(5.0), Some(5.0), Some(5.0))
+            .radius(RADIUS - 4.0)
+            .continuous_corners()
+            .border(1.0, color),
+        None => el().key("frame").size(0.0, 0.0),
+    }
 }
 
 /// A hairline that glows in the middle.
@@ -244,7 +294,7 @@ fn glow_rule(look: Look) -> El {
     play(rule, look.intro.map(Intro::rule))
         .h(1.0)
         .w_full()
-        .linear_gradient(FRAC_PI_2, palette::arcane().rule())
+        .linear_gradient(FRAC_PI_2, look.p.rule())
 }
 
 // MARK: Search bar
@@ -259,18 +309,18 @@ fn orb(size: f32, look: Look) -> El {
             [0.35, 0.3],
             size * 0.9,
             [
-                (0.0, p.violet.alpha(0.55)),
-                (0.7, p.magenta.alpha(0.18)),
-                (1.0, p.magenta.alpha(0.06)),
+                (0.0, p.glow.alpha(0.55 * p.radiance.sqrt())),
+                (0.7, p.glow2.alpha(0.18 * p.radiance.sqrt())),
+                (1.0, p.glow2.alpha(0.06)),
             ],
         )
-        .border_gradient(1.0, Color::WHITE.alpha(0.28), Color::WHITE.alpha(0.04))
+        .border_gradient(1.0, p.edge.0.alpha(p.edge.0.a * 1.3), p.edge.1)
         .box_shadow(Shadow {
             x: 0.0,
             y: 0.0,
             blur: 22.0,
             spread: 0.0,
-            color: p.violet.alpha(0.45),
+            color: p.glow.alpha(0.45 * p.radiance),
             inset: false,
         })
 }
@@ -313,13 +363,20 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
     } else {
         Vec::new()
     };
-    let field = text_input(&s.field, wand::spells::query_style())
+    let field = text_input(&s.field, p.query_style())
         .key("query")
         .single_line()
         .grow(1.0)
         .color(p.text)
         .spans(spans)
-        .caret(p.magenta, p.violet.alpha(0.45))
+        .caret(
+            if p.theme == Theme::Sigil {
+                p.glow
+            } else {
+                p.glow2
+            },
+            p.glow.alpha(0.45 * p.radiance.sqrt()),
+        )
         // When deleting empties the query, the placeholder waits for the text to fade.
         .placeholder(
             s.placeholder(),
@@ -362,7 +419,7 @@ fn loading_bar(active: bool, look: Look) -> El {
             bar = bar.child(
                 el().grow(1.0)
                     .h_full()
-                    .fill(look.p.violet.mix(look.p.magenta, t))
+                    .fill(look.p.glow.mix(look.p.glow2, t))
                     .cycle(Cycle {
                         period: 1.1,
                         phase,
@@ -463,27 +520,41 @@ fn results(s: &Cantrip, look: Look) -> El {
         .radius(11.0)
         .continuous_corners()
         .linear_gradient(FRAC_PI_2, p.sweep(1.0))
-        .border_gradient(1.0, Color::WHITE.alpha(0.16), Color::WHITE.alpha(0.03))
+        .border_gradient(
+            1.0,
+            Color::WHITE.alpha(0.16 * p.radiance),
+            Color::WHITE.alpha(0.03 * p.radiance),
+        )
         .box_shadow(Shadow {
             x: 0.0,
             y: 4.0,
             blur: 22.0,
             spread: -4.0,
-            color: p.violet.alpha(0.35),
+            color: p.glow.alpha(0.35 * p.radiance),
             inset: false,
         })
         .motion(GLIDE)
         .child(
             el().pin(Some(0.0), Some(12.0), None, None)
-                .size(3.0, ROW_H - 24.0)
+                .size(
+                    if p.theme == Theme::Sigil { 2.0 } else { 3.0 },
+                    ROW_H - 24.0,
+                )
                 .radius(1.5)
-                .linear_gradient(PI, [(0.0, p.violet), (1.0, p.magenta)])
+                .linear_gradient(
+                    PI,
+                    if p.theme == Theme::Sigil {
+                        [(0.0, p.glow), (1.0, p.glow)]
+                    } else {
+                        [(0.0, p.glow), (1.0, p.glow2)]
+                    },
+                )
                 .box_shadow(Shadow {
                     x: 0.0,
                     y: 0.0,
                     blur: 10.0,
                     spread: 0.0,
-                    color: p.magenta.alpha(0.8),
+                    color: p.glow2.alpha(0.8 * p.radiance),
                     inset: false,
                 }),
         );
@@ -516,7 +587,22 @@ fn results(s: &Cantrip, look: Look) -> El {
 
 /// A coloured tag at the end of a row.
 fn chip(label: &str, look: Look) -> El {
-    let c = look.p.kind(label);
+    let p = look.p;
+    let c = p.kind(label);
+    if p.theme == Theme::Sigil {
+        // An outlined tag in spaced serif capitals.
+        return row()
+            .h(18.0)
+            .px(7.0)
+            .center()
+            .radius(4.0)
+            .border(1.0, c.alpha(0.35))
+            .child(
+                text(label.to_uppercase())
+                    .font(TextStyle::new(9.5, 600.0).tracking(1.5).family(p.display))
+                    .color(c.alpha(0.9)),
+            );
+    }
     row()
         .h(20.0)
         .px(8.0)
@@ -595,7 +681,7 @@ fn row_view(r: &Row, index: usize, selected: bool, look: Look) -> El {
 fn detail_view(markdown: &str, metadata: &[WireMetadata], look: Look) -> El {
     let p = look.p;
     let style = MarkdownStyle::neutral(true)
-        .inline_code_bg(p.violet.alpha(0.16))
+        .inline_code_bg(p.glow.alpha(0.16))
         .code_block(Color::BLACK.alpha(0.28), Color::WHITE.alpha(0.07));
     let body = col()
         .key("detail-scroll")
@@ -630,7 +716,7 @@ fn detail_view(markdown: &str, metadata: &[WireMetadata], look: Look) -> El {
                 PI,
                 [
                     (0.0, Color::TRANSPARENT),
-                    (0.3, p.violet.alpha(0.35)),
+                    (0.3, p.glow.alpha(0.35)),
                     (1.0, Color::TRANSPARENT),
                 ],
             ))
@@ -703,7 +789,7 @@ fn footer(s: &Cantrip, look: Look) -> El {
         let (symbol, color) = match toast.style {
             ToastStyle::Success => ("checkmark.circle.fill", p.green),
             ToastStyle::Failure => ("xmark.octagon.fill", p.red),
-            ToastStyle::Info => ("sparkles", p.violet.mix(Color::WHITE, 0.3)),
+            ToastStyle::Info => ("sparkles", p.glow.mix(Color::WHITE, 0.3)),
         };
         let mut line = row()
             .key("toast")
@@ -757,16 +843,23 @@ fn footer(s: &Cantrip, look: Look) -> El {
                     .color(p.muted),
             )
     } else {
-        row()
-            .key("brand")
-            .gap(6.0)
-            .center_y()
-            .child(text("✦").font(font(12.0, 600.0)).color(p.magenta))
-            .child(
+        match p.theme {
+            Theme::Arcane => row()
+                .key("brand")
+                .gap(6.0)
+                .center_y()
+                .child(text("✦").font(font(12.0, 600.0)).color(p.glow2))
+                .child(
+                    text("cantrip")
+                        .font(font(12.0, 650.0).tracking(0.6))
+                        .color(p.muted),
+                ),
+            Theme::Sigil => row().key("brand").center_y().child(
                 text("cantrip")
-                    .font(font(12.0, 650.0).tracking(0.6))
-                    .color(p.muted),
-            )
+                    .font(TextStyle::new(13.0, 400.0).italic().family(p.display))
+                    .color(p.faint),
+            ),
+        }
     };
     let mut bar = row()
         .key("footer")
@@ -895,9 +988,12 @@ fn action_panel(s: &Cantrip, look: Look) -> El {
         .radial_gradient(
             [0.1, 0.0],
             [260.0, 120.0],
-            [(0.0, p.violet.alpha(0.22)), (1.0, p.violet.alpha(0.0))],
+            [
+                (0.0, p.glow.alpha(0.22 * p.radiance)),
+                (1.0, p.glow.alpha(0.0)),
+            ],
         )
-        .border_gradient(1.0, Color::WHITE.alpha(0.22), Color::WHITE.alpha(0.05))
+        .border_gradient(1.0, p.edge.0, p.edge.1)
         .box_shadow(Shadow {
             x: 0.0,
             y: 14.0,
@@ -911,7 +1007,7 @@ fn action_panel(s: &Cantrip, look: Look) -> El {
             y: 0.0,
             blur: 30.0,
             spread: 0.0,
-            color: p.violet.alpha(0.22),
+            color: p.glow.alpha(0.22 * p.radiance),
             inset: false,
         })
         .transition(

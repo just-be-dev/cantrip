@@ -200,6 +200,123 @@ impl Canvas {
         }
     }
 
+    /// Paints over the pixels within `reach` of (`cx`, `cy`), unless something nearer than `z`
+    /// covers the centre: `cover(dx, dy)` gives each pixel's coverage (0…1) and how far toward
+    /// white its colour goes, from its offset off the centre.
+    fn paint(
+        &mut self,
+        at: V3,
+        reach: f32,
+        color: V3,
+        alpha: f32,
+        cover: impl Fn(f32, f32) -> (f32, f32),
+    ) {
+        let [cx, cy, z] = at;
+        if alpha <= 0.0 || reach <= 0.0 {
+            return;
+        }
+        if cx >= 0.0
+            && cy >= 0.0
+            && (cx as usize) < self.w
+            && (cy as usize) < self.h
+            && self.depth[cy as usize * self.w + cx as usize] < z
+        {
+            return;
+        }
+        let x0 = (cx - reach).floor().max(0.0) as usize;
+        let y0 = (cy - reach).floor().max(0.0) as usize;
+        let x1 = ((cx + reach).ceil() as isize).min(self.w as isize - 1);
+        let y1 = ((cy + reach).ceil() as isize).min(self.h as isize - 1);
+        if x1 < 0 || y1 < 0 {
+            return;
+        }
+        for py in y0..=y1 as usize {
+            for px in x0..=x1 as usize {
+                let (a, white) = cover(px as f32 + 0.5 - cx, py as f32 + 0.5 - cy);
+                let a = a * alpha;
+                if a <= 0.002 {
+                    continue;
+                }
+                let tint = mix(color, [1.0; 3], white);
+                let src = [tint[0] * a, tint[1] * a, tint[2] * a, a];
+                let dst = &mut self.color[py * self.w + px];
+                for k in 0..4 {
+                    dst[k] = src[k] + dst[k] * (1.0 - a);
+                }
+            }
+        }
+    }
+
+    /// A soft point of light `radius` device pixels across its core, with a halo `glow` times
+    /// as wide and a white-hot middle.
+    pub fn dot(&mut self, at: V3, radius: f32, glow: f32, color: V3, alpha: f32) {
+        let r = radius.max(0.4);
+        self.paint(at, r * glow + 1.0, color, alpha, |dx, dy| {
+            let d = (dx * dx + dy * dy).sqrt();
+            let body = (r + 0.5 - d).clamp(0.0, 1.0);
+            let halo = 0.5 * (-(d / (r * glow * 0.55)).powi(2)).exp();
+            (body.max(halo), 0.6 * (1.0 - d / r).clamp(0.0, 1.0))
+        });
+    }
+
+    /// A thin ring of light, `radius` device pixels round and `width` wide.
+    pub fn ring(&mut self, at: V3, radius: f32, width: f32, color: V3, alpha: f32) {
+        self.paint(at, radius + width + 2.0, color, alpha, |dx, dy| {
+            let d = ((dx * dx + dy * dy).sqrt() - radius).abs();
+            ((width / 2.0 + 0.5 - d).clamp(0.0, 1.0), 0.0)
+        });
+    }
+
+    /// Polylines `width` device pixels wide, anti-aliased, each pixel covered once however many
+    /// strokes pass it (so joints don't double up), with a soft glow `glow` pixels wide.
+    pub fn strokes(
+        &mut self,
+        at: V3,
+        lines: &[Vec<[f32; 2]>],
+        width: f32,
+        glow: f32,
+        color: V3,
+        alpha: f32,
+    ) {
+        let reach = lines
+            .iter()
+            .flatten()
+            .map(|p| ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2)).sqrt())
+            .fold(0.0, f32::max)
+            + width
+            + glow
+            + 2.0;
+        let segments: Vec<([f32; 2], [f32; 2])> = lines
+            .iter()
+            .flat_map(|l| {
+                l.windows(2).map(|w| {
+                    (
+                        [w[0][0] - at[0], w[0][1] - at[1]],
+                        [w[1][0] - at[0], w[1][1] - at[1]],
+                    )
+                })
+            })
+            .collect();
+        self.paint(at, reach, color, alpha, |x, y| {
+            let d = segments
+                .iter()
+                .map(|&(a, b)| {
+                    let (vx, vy) = (b[0] - a[0], b[1] - a[1]);
+                    let t = (((x - a[0]) * vx + (y - a[1]) * vy) / (vx * vx + vy * vy).max(1e-6))
+                        .clamp(0.0, 1.0);
+                    ((x - a[0] - vx * t).powi(2) + (y - a[1] - vy * t).powi(2)).sqrt()
+                })
+                .fold(f32::INFINITY, f32::min);
+            let body = (width / 2.0 + 0.5 - d).clamp(0.0, 1.0);
+            let halo = if glow > 0.0 {
+                0.3 * (-(d / glow).powi(2)).exp()
+            } else {
+                0.0
+            };
+            (body.max(halo), 0.15 * body)
+        });
+    }
+
     /// Straight-alpha sRGB bytes, rows top first.
     pub fn encode(&self) -> Vec<u8> {
         let enc = |v: f32| {

@@ -83,10 +83,10 @@ impl Outro {
             let (mx, my) = (noise(i, 1) * w, noise(i, 2) * h);
             let dot = 2.2 + noise(i, 3) * 3.6;
             let color = [
-                p.magenta.mix(Color::WHITE, 0.2),
-                p.violet.mix(Color::WHITE, 0.45),
+                p.glow2.mix(Color::WHITE, 0.2),
+                p.glow.mix(Color::WHITE, 0.45),
                 Color::WHITE,
-                p.cyan.mix(Color::WHITE, 0.3),
+                p.cool.mix(Color::WHITE, 0.3),
             ][i % 4];
             // How far it travels: its layer's end scale, about a point under the panel.
             let drift = [NEAR, MID, FAR][(noise(i, 4) * 2.99) as usize];
@@ -112,6 +112,41 @@ impl Outro {
             );
         }
         layer
+    }
+}
+
+/// Sigil's seal: a ring closes in over the wand as the glass fades, turning to a point.
+const SEAL: &[Beat] = &[
+    Beat::new(0.0).opacity(0.0).scale(2.6),
+    Beat::new(0.24)
+        .opacity(0.9)
+        .scale(1.0)
+        .easing(Easing::EASE_OUT),
+    Beat::new(0.46)
+        .opacity(0.0)
+        .scale(0.08)
+        .easing(Easing::EASE_IN),
+];
+
+impl Outro {
+    /// Sigil's exit, instead of stardust: two fine gold rings close over the wand at (`x`,
+    /// `y`) as the glass goes.
+    pub fn seal(self, x: f32, y: f32, p: Palette) -> El {
+        let ring = |r: f32, alpha: f32| {
+            el().absolute(30.0 - r, 30.0 - r)
+                .size(2.0 * r, 2.0 * r)
+                .radius(r)
+                .border(1.0, p.glow.alpha(alpha))
+        };
+        el().key(format!("seal-{}", self.n))
+            .a11y_hidden()
+            .inert()
+            .pin(Some(x - 30.0), Some(y - 30.0), None, None)
+            .size(60.0, 60.0)
+            .raise()
+            .sequence(self.at(SEAL, 0.06))
+            .child(ring(26.0, 0.85))
+            .child(ring(20.0, 0.45))
     }
 }
 

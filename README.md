@@ -258,8 +258,13 @@ $ cantrip            # lists every command from your grimoire
 `~/.config/cantrip/config.json` (optional):
 
 ```json
-{ "hotkey": "option+space", "bun": "/opt/homebrew/bin/bun" }
+{ "hotkey": "option+space", "bun": "/opt/homebrew/bin/bun", "theme": "sigil" }
 ```
+
+`theme` is the bar's magic: `sigil` (the default: ink and tarnished gold, letters
+that arrive as orbs and runes) or `arcane` (violet glass, sparkles and sparks).
+Search for **Sigil Theme** or **Arcane Theme** in the bar to switch on the fly;
+the one you pick there is remembered and wins over the config file.
 
 The hotkey takes `cmd`, `option`, `ctrl`, and `shift`, plus a key
 (`space`, `a`–`z`, `0`–`9`, …). Without a `bun` entry, Cantrip runs the bun

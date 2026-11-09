@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use rune::Color;
 
 use super::super::palette::{Palette, srgb};
+use super::super::theme::Theme;
 use super::CAMERA;
 use super::motion::smoothstep;
 use super::raster::{V3, add, dot, mix, mul, norm, sub};
@@ -150,30 +151,46 @@ pub static MESH: LazyLock<Mesh> = LazyLock::new(|| {
     mesh
 });
 
-/// Lights and materials, in the Arcane palette's linear colours.
+/// Lights and materials, in the theme's linear colours. Arcane: a violet lacquered shaft and a
+/// ribbon-wrapped grip that glow at the edges. Sigil: ebony, dark leather and aged gold, lit more
+/// quietly, with an ivory tip.
 pub struct Looks {
     gold: V3,
     grip: V3,
     wrap: V3,
     shaft: V3,
-    violet: V3,
-    magenta: V3,
+    glow: V3,
+    glow2: V3,
+    /// How much the edges and the shaft's charge glow.
+    rim: f32,
 }
 
 impl Looks {
     pub fn new(p: &Palette) -> Looks {
-        Looks {
-            gold: rgb(p.amber),
-            grip: rgb(srgb(0.36, 0.22, 0.56, 1.0)),
-            wrap: rgb(srgb(0.13, 0.08, 0.24, 1.0)),
-            shaft: rgb(srgb(0.17, 0.12, 0.30, 1.0)),
-            violet: rgb(p.violet),
-            magenta: rgb(p.magenta),
+        match p.theme {
+            Theme::Arcane => Looks {
+                gold: rgb(p.amber),
+                grip: rgb(srgb(0.36, 0.22, 0.56, 1.0)),
+                wrap: rgb(srgb(0.13, 0.08, 0.24, 1.0)),
+                shaft: rgb(srgb(0.17, 0.12, 0.30, 1.0)),
+                glow: rgb(p.glow),
+                glow2: rgb(p.glow2),
+                rim: 1.0,
+            },
+            Theme::Sigil => Looks {
+                gold: rgb(srgb(0.80, 0.68, 0.45, 1.0)),
+                grip: rgb(srgb(0.24, 0.18, 0.15, 1.0)),
+                wrap: rgb(srgb(0.12, 0.09, 0.08, 1.0)),
+                shaft: rgb(srgb(0.13, 0.10, 0.11, 1.0)),
+                glow: rgb(p.glow),
+                glow2: rgb(p.glow2),
+                rim: 0.4,
+            },
         }
     }
 
     /// Attributes: world normal, world position, height on the model, angle (cos, sin),
-    /// material. Blinn-Phong under a warm key and a violet fill, with a magenta-violet rim.
+    /// material. Blinn-Phong under a warm key and a glow fill, with a glow2-glow rim.
     pub fn shade(&self, a: &[f32; 10]) -> [f32; 4] {
         let n = norm([a[0], a[1], a[2]]);
         let v = norm(sub(CAMERA, [a[3], a[4], a[5]]));
@@ -195,7 +212,7 @@ impl Looks {
                         mul(self.gold, lit),
                         mul(mix(self.gold, white, 0.6), 1.2 * shine(40)),
                     ),
-                    mul(self.magenta, 0.3 * rim),
+                    mul(self.glow2, 0.3 * self.rim * rim),
                 )
             }
             1 => {
@@ -206,31 +223,31 @@ impl Looks {
                 let base = mix(self.grip, self.wrap, ribbon);
                 let lit = add(
                     mul(base, 0.18 + 0.85 * diffuse),
-                    mul(self.violet, 0.12 * fill),
+                    mul(self.glow, 0.12 * fill),
                 );
                 add(
                     add(lit, mul(white, 0.18 * shine(18))),
-                    mul(self.violet, 0.7 * rim),
+                    mul(self.glow, 0.7 * self.rim * rim),
                 )
             }
             2 => {
                 // Lacquer that glows warmer toward the tip, as if charged.
                 let lit = add(
                     mul(self.shaft, 0.2 + 0.9 * diffuse),
-                    mul(self.violet, 0.15 * fill),
+                    mul(self.glow, 0.15 * fill),
                 );
                 let edge = mul(
-                    mix(self.violet, self.magenta, smoothstep(-0.3, 0.8, y)),
-                    0.9 * rim,
+                    mix(self.glow, self.glow2, smoothstep(-0.3, 0.8, y)),
+                    0.9 * self.rim * rim,
                 );
-                let charge = mul(self.magenta, 0.22 * smoothstep(0.45, 0.9, y));
+                let charge = mul(self.glow2, 0.22 * self.rim * smoothstep(0.45, 0.9, y));
                 add(add(add(lit, mul(white, 0.65 * shine(60))), edge), charge)
             }
             _ => {
                 let glow = mix(
                     white,
-                    mul(mix(self.violet, self.magenta, 0.5), 1.1),
-                    0.25 + 0.6 * rim,
+                    mul(mix(self.glow, self.glow2, 0.5), 1.1),
+                    (0.25 + 0.6 * rim) * self.rim.sqrt(),
                 );
                 mul(glow, 1.15)
             }

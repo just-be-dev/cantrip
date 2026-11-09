@@ -122,6 +122,19 @@ pub fn save_usage(usage: &HashMap<String, i64>) {
     };
 }
 
+pub fn load_string(key: &str) -> Option<String> {
+    NSUserDefaults::standardUserDefaults()
+        .stringForKey(&NSString::from_str(key))
+        .map(|s| s.to_string())
+}
+
+pub fn save_string(key: &str, value: &str) {
+    unsafe {
+        NSUserDefaults::standardUserDefaults()
+            .setObject_forKey(Some(&NSString::from_str(value)), &NSString::from_str(key))
+    };
+}
+
 fn default_bool(key: &str) -> bool {
     NSUserDefaults::standardUserDefaults().boolForKey(&NSString::from_str(key))
 }

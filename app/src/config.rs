@@ -3,7 +3,8 @@
 //! ```json
 //! {
 //!   "hotkey": "option+space",   // modifiers: cmd, option/alt, ctrl, shift
-//!   "bun": "/path/to/bun"       // optional; found automatically otherwise
+//!   "bun": "/path/to/bun",      // optional; found automatically otherwise
+//!   "theme": "sigil"            // sigil or arcane; the one chosen in the bar wins
 //! }
 //! ```
 
@@ -16,6 +17,8 @@ use serde::Deserialize;
 pub struct Config {
     pub hotkey: String,
     pub bun: Option<String>,
+    /// The theme to start in until one is chosen in the bar (`views::theme`).
+    pub theme: Option<String>,
 }
 
 impl Default for Config {
@@ -23,6 +26,7 @@ impl Default for Config {
         Config {
             hotkey: "option+space".into(),
             bun: None,
+            theme: None,
         }
     }
 }
@@ -120,6 +124,7 @@ mod tests {
         let c = Config {
             hotkey: "cmd+shift+space".into(),
             bun: None,
+            theme: None,
         };
         assert_eq!(
             c.menu_shortcut(),
@@ -135,11 +140,13 @@ mod tests {
         let c = Config {
             hotkey: "ctrl+k".into(),
             bun: None,
+            theme: None,
         };
         assert_eq!(c.menu_shortcut().unwrap().0, "k");
         let c = Config {
             hotkey: "ctrl+f13".into(),
             bun: None,
+            theme: None,
         };
         assert_eq!(c.menu_shortcut(), None);
     }

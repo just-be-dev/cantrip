@@ -20,12 +20,14 @@ mod sparkle;
 pub mod spells;
 
 use std::cell::Cell;
-use std::f32::consts::{FRAC_PI_4, TAU};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 use std::time::Duration;
 
-use rune::{Color, El, Pixels, Span, Transition, Tx, el};
+use rune::{Color, El, Pixels, Shape, Span, Transition, Tx, canvas, el};
 
-use super::palette::{self, Palette};
+use super::palette::{Palette, srgb};
+use super::runes;
+use super::theme::Theme;
 use model::{Looks, MESH, rgb};
 pub use motion::Gesture;
 use motion::{BLEND, Mood, Stance, ease_in_out, ease_out, flare, lerp, smoothstep};
@@ -76,6 +78,8 @@ const ROCK_PERIOD: f32 = 5.0;
 
 /// What the bar tells the wand each frame.
 pub struct Signals<'a> {
+    /// How the magic looks.
+    pub theme: Theme,
     /// It's on screen.
     pub shown: bool,
     /// Counts openings; a new one starts a flourish.
@@ -106,6 +110,8 @@ pub struct Wand {
     drawn: Option<(f64, f32, bool)>,
     /// Whether the last frame had the opening's layer up (`hero_view`).
     heroing: bool,
+    /// The theme it's drawn in.
+    theme: Theme,
 
     /// The opening the current flourish belongs to, and the frame time it began.
     intro: u64,
@@ -159,6 +165,7 @@ impl Wand {
             scale: Cell::new(2.0),
             drawn: None,
             heroing: false,
+            theme: Theme::default(),
             intro: 0,
             began: None,
             still: false,
@@ -204,9 +211,9 @@ impl Wand {
 
     /// The query was edited from `old` to `new`: the wand writes what was typed and takes back
     /// what was deleted.
-    pub fn edited(&mut self, old: &str, new: &str) {
+    pub fn edited(&mut self, old: &str, new: &str, theme: Theme) {
         if !self.still {
-            self.spells.edited(old, new);
+            self.spells.edited(old, new, theme);
         }
     }
 
@@ -240,18 +247,24 @@ impl Wand {
             .a11y_hidden()
     }
 
-    /// Seconds into the opening while the wand is on its way in (not under Reduce Motion).
+    /// Seconds into the opening while its layer is up (not under Reduce Motion): until the wand
+    /// lands, and in Sigil until the sigil has faded.
     fn opening(&self) -> Option<f32> {
         let s = (self.now - self.began?) as f32;
-        (!self.still && s < LAND).then_some(s.max(0.0))
+        let end = match self.theme {
+            Theme::Sigil => SIGIL_END.max(LAND),
+            Theme::Arcane => LAND,
+        };
+        (!self.still && s < end).then_some(s.max(0.0))
     }
 
     /// It's flying in: it draws over the window (`hero_view`), not in its slot.
     pub fn flying(&self) -> bool {
-        self.opening().is_some()
+        self.opening().is_some_and(|s| s < LAND)
     }
 
-    /// The opening over the window: the wand on its way in.
+    /// The opening over the window: the wand on its way in, and in Sigil the sigil it
+    /// inscribes around its glow as it casts the bar.
     pub fn hero_view(&self, scale: f32) -> Option<El> {
         let s = self.opening()?;
         let mut layer = el()
@@ -263,6 +276,11 @@ impl Wand {
             .raise()
             .transition(Transition::none())
             .instant_changes();
+        if self.theme == Theme::Sigil
+            && let Some(sigil) = sigil(s, &self.theme.palette())
+        {
+            layer = layer.child(sigil);
+        }
         if s < LAND {
             self.scale.set(scale);
             let (center, _) = placement(s);
@@ -334,7 +352,7 @@ impl Wand {
             tx.wake_after(Duration::from_secs_f64(next));
         }
         if due {
-            let (side, rgba) = self.render(scale, &palette::arcane());
+            let (side, rgba) = self.render(scale, &self.theme.palette());
             let pixels = if flying { &self.hero } else { &self.pixels };
             pixels.set(side, side, rgba);
             self.drawn = Some((t, scale, flying));
@@ -358,6 +376,12 @@ impl Wand {
             self.mood = Mood::Idle;
             self.mood_from = Stance::default();
             self.mood_since = f64::NEG_INFINITY;
+        }
+        if signals.theme != self.theme {
+            // Draw afresh in the new theme; its sparkles would look wrong in it.
+            self.theme = signals.theme;
+            self.drawn = None;
+            self.motes.clear();
         }
         let dt = self.last.map_or(0.0, |last| (t - last).clamp(0.0, 0.1)) as f32;
         self.last = Some(t);
@@ -463,7 +487,7 @@ impl Wand {
         };
 
         // Sparkles: gestures' puffs and idle twinkles.
-        let colors = sparkle_colors(&palette::arcane());
+        let colors = sparkle_colors(&self.theme.palette());
         for p in &mut self.playing {
             let age = (t - p.at) as f32;
             for (i, puff) in p.gesture.puffs().iter().enumerate() {
@@ -478,12 +502,15 @@ impl Wand {
             let lively = self.mood != Mood::Fizzled;
             self.motes
                 .push(self.spawner.twinkle(t, tip_world, lively, &colors));
-            self.next_twinkle = t + match self.mood {
-                Mood::Idle => 0.17,
-                Mood::Curious => 0.11,
-                Mood::Attentive => 0.08,
-                Mood::Fizzled => 0.32,
-            };
+            // Sigil's dust drifts off the tip more rarely than Arcane's twinkles.
+            let rarer = if self.theme == Theme::Sigil { 2.2 } else { 1.0 };
+            self.next_twinkle = t + rarer
+                * match self.mood {
+                    Mood::Idle => 0.17,
+                    Mood::Curious => 0.11,
+                    Mood::Attentive => 0.08,
+                    Mood::Fizzled => 0.32,
+                };
         }
 
         self.motes.retain(|m| m.alive(t));
@@ -541,7 +568,76 @@ impl Wand {
 
     // MARK: Rendering
 
-    /// Everything to draw over the model: motes, the orbiting stars, the tip's own star.
+    /// Everything to draw over the model, in the theme's look.
+    fn marks(&self, p: &Palette) -> Vec<Mark> {
+        match p.theme {
+            Theme::Arcane => self.stars(p).into_iter().map(Mark::Star).collect(),
+            Theme::Sigil => self.sigil_marks(p),
+        }
+    }
+
+    /// Sigil: dust where Arcane has sparkles, a slow ring of runes where it has orbiting stars,
+    /// and at the tip a pale point of light in a thin halo.
+    fn sigil_marks(&self, p: &Palette) -> Vec<Mark> {
+        let pose = &self.pose;
+        let st = self.stance;
+        let t = self.now;
+        let mut marks: Vec<Mark> = self
+            .motes
+            .iter()
+            .filter_map(|m| m.star(t))
+            .map(|s| Mark::Dot {
+                at: s.at,
+                radius: s.radius * 0.32,
+                glow: 2.6,
+                color: s.color,
+                alpha: s.alpha * 0.85,
+            })
+            .collect();
+
+        let reach = (1.0 + st.reach).max(0.0);
+        let glow = (1.0 + st.glow).clamp(0.0, 1.5);
+        if reach > 0.01 {
+            let middle = pose.place([0.0; 3]);
+            let r = 1.5 * reach * pose.scale;
+            for i in 0..RING_RUNES {
+                // A fifth of the stars' pace: the ring turns once every eighteen seconds.
+                let a = self.orbit * TAU / 5.0 + i as f32 / RING_RUNES as f32 * TAU;
+                let (sin, cos) = a.sin_cos();
+                let front = sin > 0.0;
+                marks.push(Mark::Rune {
+                    at: add(middle, [r * cos, -0.42 * r * sin, 0.7 * r * sin]),
+                    index: i * 3 + 1,
+                    height: 0.42 * pose.scale.min(1.4),
+                    angle: a + FRAC_PI_2,
+                    color: rgb(p.glow),
+                    alpha: (if front { 0.45 } else { 0.15 }) * glow * reach.min(1.0),
+                });
+            }
+        }
+
+        let star = (1.0 + st.star).max(0.0);
+        if star > 0.01 {
+            let at = add(pose.place(TIP), [0.0, 0.0, 0.25]);
+            marks.push(Mark::Dot {
+                at,
+                radius: 0.065 * star.sqrt() * pose.scale.min(1.0),
+                glow: 2.5 + star,
+                color: rgb(srgb(0.97, 0.94, 0.86, 1.0)),
+                alpha: 1.0,
+            });
+            marks.push(Mark::Ring {
+                at,
+                radius: 0.2 * (0.6 + 0.4 * star.min(3.0)) * pose.scale.min(1.0),
+                width: 0.7,
+                color: rgb(p.glow),
+                alpha: (0.16 + 0.12 * star.min(2.5)).min(0.55),
+            });
+        }
+        marks
+    }
+
+    /// Arcane: motes, the orbiting stars, the tip's own star.
     fn stars(&self, p: &Palette) -> Vec<Star> {
         let pose = &self.pose;
         let st = self.stance;
@@ -551,11 +647,7 @@ impl Wand {
         let reach = (1.0 + st.reach).max(0.0);
         let glow = (1.0 + st.glow).clamp(0.0, 1.5);
         if reach > 0.01 {
-            let colors = [
-                rgb(p.amber),
-                [1.0; 3],
-                rgb(p.violet.mix(Color::WHITE, 0.45)),
-            ];
+            let colors = [rgb(p.amber), [1.0; 3], rgb(p.glow.mix(Color::WHITE, 0.45))];
             let middle = pose.place([0.0; 3])[2];
             for (i, &(_, distance, size)) in ORBITERS.iter().enumerate() {
                 let at = pose.place(orbiter(i, self.orbit, reach));
@@ -581,7 +673,7 @@ impl Wand {
                 at: add(pose.place(TIP), [0.0, 0.0, 0.25]),
                 radius: 0.2 * star * pose.scale.min(1.0),
                 angle: pose.star_angle,
-                color: rgb(p.violet.mix(Color::WHITE, 0.6)),
+                color: rgb(p.glow.mix(Color::WHITE, 0.6)),
                 alpha: 1.0,
             });
         }
@@ -592,7 +684,7 @@ impl Wand {
     /// it's the large image, with the wand at its size in flight.
     fn render(&self, scale: f32, p: &Palette) -> (u32, Vec<u8>) {
         let size = if self.flying() { HERO_CANVAS } else { CANVAS };
-        render(&self.pose, self.stars(p), size, scale, self.zoom, p)
+        render(&self.pose, self.marks(p), size, scale, self.zoom, p)
     }
 }
 
@@ -677,19 +769,163 @@ impl Wand {
 }
 
 fn sparkle_colors(p: &Palette) -> [V3; 4] {
-    [
-        [1.0; 3],
-        rgb(p.violet.mix(Color::WHITE, 0.45)),
-        rgb(p.magenta.mix(Color::WHITE, 0.25)),
-        rgb(p.amber),
-    ]
+    match p.theme {
+        Theme::Arcane => [
+            [1.0; 3],
+            rgb(p.glow.mix(Color::WHITE, 0.45)),
+            rgb(p.glow2.mix(Color::WHITE, 0.25)),
+            rgb(p.amber),
+        ],
+        Theme::Sigil => [
+            rgb(p.text),
+            rgb(p.glow),
+            rgb(p.glow.mix(Color::WHITE, 0.4)),
+            rgb(p.glow2.mix(Color::WHITE, 0.3)),
+        ],
+    }
 }
 
-/// The model in `pose` with `stars` over it.
-/// `size` points square at `scale`, the wand `zoom` times its size in the slot.
+/// Runes in the ring Sigil's wand wears.
+const RING_RUNES: usize = 6;
+
+/// What's drawn over the model.
+enum Mark {
+    /// A four-point star (Arcane's sparkles, orbiters and tip).
+    Star(Star),
+    /// A soft point of light, `radius` world units across its core, with a halo `glow` times
+    /// as wide.
+    Dot {
+        at: V3,
+        radius: f32,
+        glow: f32,
+        color: V3,
+        alpha: f32,
+    },
+    /// A thin ring round `at`, `radius` world units, `width` points wide.
+    Ring {
+        at: V3,
+        radius: f32,
+        width: f32,
+        color: V3,
+        alpha: f32,
+    },
+    /// A rune, `height` world units tall, turned by `angle` radians.
+    Rune {
+        at: V3,
+        index: usize,
+        height: f32,
+        angle: f32,
+        color: V3,
+        alpha: f32,
+    },
+}
+
+impl Mark {
+    fn at(&self) -> V3 {
+        match self {
+            Mark::Star(s) => s.at,
+            Mark::Dot { at, .. } | Mark::Ring { at, .. } | Mark::Rune { at, .. } => *at,
+        }
+    }
+}
+
+/// When Sigil's sigil has faded, in seconds into the opening.
+const SIGIL_END: f32 = 0.75;
+
+/// Sigil's opening: around the wand's glow, a sigil inscribes itself (two circles, two
+/// triangles, a ring of ticks and an inner circle, each drawing on in turn) as the wand casts
+/// the bar, then widens, turning, and fades as the bar swells out of it. Window points.
+fn sigil(s: f32, p: &Palette) -> Option<El> {
+    if s >= SIGIL_END {
+        return None;
+    }
+    let [cx, cy] = hero_tip();
+    let grow = 0.28;
+    let (scale, turn, alpha) = if s < grow {
+        let k = ease_out(s / grow);
+        (lerp(0.7, 1.0, k), lerp(-0.35, 0.0, k), k)
+    } else {
+        let k = (s - grow) / (SIGIL_END - grow);
+        let swell = if k < 0.3 {
+            lerp(1.0, 1.3, ease_out(k / 0.3))
+        } else {
+            lerp(1.3, 3.2, ease_in_out((k - 0.3) / 0.7))
+        };
+        (swell, 0.32 * k, (1.0 - k).powi(2))
+    };
+    let at = |r: f32, a: f32| {
+        let a = a + turn;
+        [cx + scale * r * a.cos(), cy + scale * r * a.sin()]
+    };
+    let drawn = |i: usize| ease_in_out((s - i as f32 * 0.02) / 0.26);
+    let gold = |a: f32| p.glow.alpha(0.85 * a * alpha);
+    let circle = |r: f32, k: f32| -> Vec<[f32; 2]> {
+        let n = (72.0 * k).ceil() as usize;
+        (0..=n)
+            .map(|j| at(r, -FRAC_PI_2 + TAU * k * j as f32 / n.max(1) as f32))
+            .collect()
+    };
+    let polygon = |r: f32, start: f32, k: f32| -> Vec<[f32; 2]> {
+        // Three corners, drawn on along its perimeter.
+        let corners: Vec<[f32; 2]> = (0..=3)
+            .map(|j| at(r, start + j as f32 * TAU / 3.0))
+            .collect();
+        let edges = 3.0 * k;
+        let mut pts = vec![corners[0]];
+        for j in 0..3 {
+            let f = (edges - j as f32).clamp(0.0, 1.0);
+            if f <= 0.0 {
+                break;
+            }
+            let (a, b) = (corners[j], corners[j + 1]);
+            pts.push([lerp(a[0], b[0], f), lerp(a[1], b[1], f)]);
+        }
+        pts
+    };
+    let mut shape = Shape::new();
+    for (i, (r, a)) in [(100.0, 1.0), (88.0, 0.6), (30.0, 0.5)]
+        .into_iter()
+        .enumerate()
+    {
+        let k = drawn([0, 1, 5][i]);
+        if k > 0.0 {
+            shape = shape.stroke(circle(r, k), 1.0, gold(a));
+        }
+    }
+    for (i, (start, a)) in [(-FRAC_PI_2, 0.7), (FRAC_PI_2, 0.45)]
+        .into_iter()
+        .enumerate()
+    {
+        let k = drawn(2 + i);
+        if k > 0.0 {
+            shape = shape.stroke(polygon(78.0, start, k), 1.0, gold(a));
+        }
+    }
+    let ticks = drawn(4);
+    for j in 0..12 {
+        if (j as f32) < ticks * 12.0 {
+            let a = j as f32 / 12.0 * TAU;
+            shape = shape.line(
+                at(92.0, a),
+                at(100.0, a),
+                1.0,
+                rune::LineCap::Butt,
+                gold(0.6),
+            );
+        }
+    }
+    Some(
+        canvas(shape)
+            .absolute(0.0, 0.0)
+            .size(super::WINDOW_SIZE.0, super::WINDOW_SIZE.1),
+    )
+}
+
+/// The model in `pose` with `marks` over it, `size` points square at `scale`, the wand `zoom`
+/// times its size in the slot.
 fn render(
     pose: &Pose,
-    mut stars: Vec<Star>,
+    mut marks: Vec<Mark>,
     size: f32,
     scale: f32,
     zoom: f32,
@@ -752,12 +988,40 @@ fn render(
     }
     let mut out = canvas.downsample(SUPERSAMPLE);
 
-    // Stars over it, far ones first.
+    // Marks over it, far ones first.
     let focal = focal / SUPERSAMPLE as f32;
-    stars.sort_by(|a, b| a.at[2].total_cmp(&b.at[2]));
-    for s in &stars {
-        let at = project(s.at, focal, side);
-        out.star(at, s.radius * focal / at[2], s.angle, s.color, s.alpha);
+    marks.sort_by(|a, b| a.at()[2].total_cmp(&b.at()[2]));
+    for m in &marks {
+        let at = project(m.at(), focal, side);
+        let px = |world: f32| world * focal / at[2];
+        match m {
+            Mark::Star(s) => out.star(at, px(s.radius), s.angle, s.color, s.alpha),
+            Mark::Dot {
+                radius,
+                glow,
+                color,
+                alpha,
+                ..
+            } => out.dot(at, px(*radius), *glow, *color, *alpha),
+            Mark::Ring {
+                radius,
+                width,
+                color,
+                alpha,
+                ..
+            } => out.ring(at, px(*radius), width * scale, *color, *alpha),
+            Mark::Rune {
+                index,
+                height,
+                angle,
+                color,
+                alpha,
+                ..
+            } => {
+                let lines = runes::strokes(*index, [at[0], at[1]], px(*height), *angle);
+                out.strokes(at, &lines, 1.1 * scale, 1.6 * scale, *color, *alpha);
+            }
+        }
     }
     (side as u32, out.encode())
 }
@@ -804,6 +1068,8 @@ mod tests {
 
     fn signals(query: &str) -> Signals<'_> {
         Signals {
+            // These cover the motion and Arcane's sparkles; Sigil's marks have their own test.
+            theme: super::Theme::Arcane,
             shown: true,
             intro: 1,
             query,
@@ -822,7 +1088,7 @@ mod tests {
     }
 
     fn image(wand: &Wand) -> (u32, Vec<u8>) {
-        wand.render(2.0, &super::palette::arcane())
+        wand.render(2.0, &super::Theme::Arcane.palette())
     }
 
     #[test]
@@ -965,10 +1231,10 @@ mod tests {
 
     #[test]
     fn typing_writes_with_sparks_and_makes_it_attentive() {
-        let p = super::palette::arcane();
+        let p = super::Theme::Arcane.palette();
         let mut wand = Wand::new();
         run(&mut wand, 0.0, 2.0, "");
-        wand.edited("", "c");
+        wand.edited("", "c", super::Theme::Arcane);
         run(&mut wand, 2.0, 2.0, "c");
         assert!(wand.spells.active());
         // In flight: the character is hidden.
@@ -1005,7 +1271,7 @@ mod tests {
         let mut wand = Wand::new();
         wand.advance(0.0, &signals(""), || true);
         wand.cue(Gesture::Poke);
-        wand.edited("", "c");
+        wand.edited("", "c", super::Theme::Arcane);
         run(&mut wand, 0.0, 1.0, "c");
         assert!(wand.playing.is_empty() && !wand.spells.active() && wand.motes.is_empty());
     }

@@ -35,6 +35,7 @@ use crate::protocol::AppMessage;
 use crate::services::Services;
 use crate::store::{Builtin, Cantrip};
 use crate::views::hud::{self, Hud};
+use crate::views::theme::Theme;
 
 /// Re-scan installed apps when the bar opens after this long.
 const RESCAN_AFTER: Duration = Duration::from_secs(30);
@@ -173,6 +174,13 @@ fn start(s: &mut Cantrip, config: Config, handle: AppHandle<Cantrip>) {
     s.services.main_item = Some(MainItem::new(mtm, menu, move |command| {
         menu_handle.update(move |s, tx| main_command(s, command, tx))
     }));
+
+    // The theme chosen in the bar wins; until there is one, config.json's.
+    if s.services.load_theme().is_none()
+        && let Some(theme) = config.theme.as_deref().and_then(Theme::parse)
+    {
+        s.set_theme(theme);
+    }
 
     platform::login::enable_on_first_run();
     rescan(s, &handle);

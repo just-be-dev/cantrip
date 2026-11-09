@@ -1,28 +1,36 @@
-//! The wand writing the query. Each typed character stays hidden while a spark flies from the
-//! wand's tip to where it goes; it appears as the spark lands, glowing, and cools to the
-//! text's colour. A deleted character's ghost fades where it was while its dust streams back
-//! into the tip. All of it is a function of the frame clock, drawn by the view: the field's
-//! per-frame [`Span`]s hide and colour the characters, and one [`Shape`] holds the sparks.
+//! The wand writing the query. Each typed character stays hidden while the wand's magic
+//! carries it to its place, then shows. Arcane: a spark flies from the tip and the character
+//! appears as it lands, glowing, cooling to the text's colour; a deleted character's ghost
+//! fades where it was while its dust streams back into the tip. Sigil (`sigil.rs`): an orb
+//! lands as the letter's rune, which dissolves into it; a deleted letter turns back into its
+//! rune and the wand draws it in. Each edit keeps the theme it was made in. All of it is a
+//! function of the frame clock, drawn by the view: the field's per-frame [`Span`]s hide and
+//! colour the characters, and a layer over the window holds the rest.
 
 use rune::{Color, El, Shape, Span, TextStyle, Transition, canvas, el, text};
 
+mod sigil;
+
 use super::super::palette::Palette;
+use super::super::theme::Theme;
 use super::super::{FIELD_X, ROW_MID, WAND_CENTER, WINDOW_SIZE};
 use super::motion::{ease_in_out, ease_out, lerp, smoothstep};
 use super::sparkle::hash;
 
-/// The search field's type, which the spells measure to find characters.
-pub fn query_style() -> TextStyle {
-    TextStyle::new(21.0, 400.0).lh(28.0).tracking(-0.2)
+/// The search field's type in `theme`, which the spells measure to find characters.
+fn query_style(theme: Theme) -> TextStyle {
+    theme.palette().query_style()
 }
 
 /// A character glows this long after it lands, cooling to the text's colour.
 const HEAT: f32 = 0.5;
 /// A deleted character's ghost fades over this long.
 const FADE: f32 = 0.4;
-/// When the query is emptied, the placeholder fades in over this window (seconds after the
-/// deletion), as the deleted text's ghost fades out of the way.
+/// When the query is emptied, the placeholder fades in once what was deleted is out of the way:
+/// Arcane's ghost after `PLACEHOLDER_IN.0`, Sigil's runes once they reach the wand. It fades in
+/// over `PLACEHOLDER_FADE`.
 const PLACEHOLDER_IN: (f32, f32) = (0.3, 0.55);
+const PLACEHOLDER_FADE: f32 = PLACEHOLDER_IN.1 - PLACEHOLDER_IN.0;
 /// Seconds between the characters of one edit appearing (a paste writes itself out).
 const STAGGER: f32 = 0.03;
 const TRAIL: usize = 6;
@@ -30,8 +38,11 @@ const TRAIL: usize = 6;
 /// Characters on their way: bytes `start..end` of the query.
 #[derive(Clone, Debug)]
 struct Glyphs {
+    theme: Theme,
     start: usize,
     end: usize,
+    /// Sigil: each character's orb's flight, set when stamped.
+    flights: Vec<f32>,
     /// Frame time and wand tip (window points) when the spark left; `None` until the frame
     /// after the keystroke stamps it.
     born: Option<(f64, [f32; 2])>,
@@ -42,6 +53,7 @@ struct Glyphs {
 /// Characters deleted, fading where they were.
 #[derive(Clone, Debug)]
 struct Ghost {
+    theme: Theme,
     text: String,
     /// Where they started and how wide they were, in window points.
     x: f32,
@@ -56,8 +68,9 @@ pub struct Spells {
     glyphs: Vec<Glyphs>,
     ghosts: Vec<Ghost>,
     seed: u32,
-    /// When a deletion emptied the query: the placeholder waits for the ghost.
-    cleared: Option<f64>,
+    /// When a deletion emptied the query, and how long the placeholder waits for what it
+    /// deleted to clear (Arcane: its ghost to fade; Sigil: its runes to reach the wand).
+    cleared: Option<(f64, f32)>,
 }
 
 /// What the wand should do about an edit, once it's stamped.
@@ -73,7 +86,7 @@ pub enum Stamped {
 impl Spells {
     /// The query went from `old` to `new`: what was typed flies in from the wand; what was
     /// deleted fades and flies back to it.
-    pub fn edited(&mut self, old: &str, new: &str) {
+    pub fn edited(&mut self, old: &str, new: &str, theme: Theme) {
         let (at, removed, inserted) = diff(old, new);
         if removed.is_empty() && inserted == 0 {
             return;
@@ -92,8 +105,9 @@ impl Spells {
         });
         self.seed = self.seed.wrapping_add(1);
         if !removed.is_empty() {
-            let style = query_style();
+            let style = query_style(theme);
             self.ghosts.push(Ghost {
+                theme,
                 x: FIELD_X + width(&old[..at], style),
                 width: width(removed, style),
                 text: removed.to_string(),
@@ -103,6 +117,8 @@ impl Spells {
         }
         if inserted > 0 {
             self.glyphs.push(Glyphs {
+                theme,
+                flights: Vec::new(),
                 start: at,
                 end: at + inserted,
                 born: None,
@@ -116,11 +132,23 @@ impl Spells {
     /// points), and drops finished ones. Returns what each new one asks of the wand.
     pub fn stamp(&mut self, t: f64, tip: [f32; 2], query: &str) -> Vec<Stamped> {
         let mut cues = Vec::new();
-        let style = query_style();
         for g in &mut self.glyphs {
             if g.born.is_none() {
+                let style = query_style(g.theme);
                 let to = glyph_center(query, g.start, g.end, style);
                 g.flight = flight(tip, to);
+                if g.theme == Theme::Sigil {
+                    g.flights = chars_of(query, g.start, g.end)
+                        .map(|(k, i, c)| {
+                            sigil::Orb::new(
+                                tip,
+                                char_center(query, i, c, style),
+                                orb_seed(g.seed, k),
+                            )
+                            .flight
+                        })
+                        .collect();
+                }
                 g.born = Some((t, tip));
                 cues.push(Stamped::Typed);
             }
@@ -129,28 +157,31 @@ impl Spells {
             if g.born.is_none() {
                 let from = [g.x + g.width / 2.0, ROW_MID];
                 g.born = Some((t, tip));
+                let delay = match g.theme {
+                    Theme::Arcane => flight(from, tip) + 0.04,
+                    Theme::Sigil => sigil::absorb_end(g.text.chars().count()),
+                };
                 if query.is_empty() {
-                    self.cleared = Some(t);
+                    let wait = match g.theme {
+                        Theme::Arcane => PLACEHOLDER_IN.0,
+                        Theme::Sigil => delay,
+                    };
+                    self.cleared = Some((t, wait));
                 }
                 cues.push(Stamped::Erased {
-                    delay: flight(from, tip) + 0.04,
+                    delay,
                     all: query.is_empty(),
                 });
             }
         }
-        self.glyphs.retain(|g| {
-            g.born.is_none_or(|(b, _)| {
-                ((t - b) as f32) < g.flight + stagger(g) * g.chars() as f32 + HEAT
-            })
-        });
-        self.ghosts.retain(|g| {
-            g.born
-                .is_none_or(|(b, _)| ((t - b) as f32) < FADE.max(dust_end(g)))
-        });
+        self.glyphs
+            .retain(|g| g.born.is_none_or(|(b, _)| ((t - b) as f32) < g.lasts()));
+        self.ghosts
+            .retain(|g| g.born.is_none_or(|(b, _)| ((t - b) as f32) < g.lasts()));
         if !query.is_empty()
             || self
                 .cleared
-                .is_some_and(|c| ((t - c) as f32) >= PLACEHOLDER_IN.1)
+                .is_some_and(|(c, wait)| ((t - c) as f32) >= wait + PLACEHOLDER_FADE)
         {
             self.cleared = None;
         }
@@ -175,7 +206,7 @@ impl Spells {
             return 0.0;
         }
         match self.cleared {
-            Some(c) => smoothstep(PLACEHOLDER_IN.0, PLACEHOLDER_IN.1, (t - c) as f32),
+            Some((c, wait)) => smoothstep(wait, wait + PLACEHOLDER_FADE, (t - c) as f32),
             None => 1.0,
         }
     }
@@ -183,12 +214,29 @@ impl Spells {
     /// Colours for the field's characters at `t`: hidden until their spark lands, then hot,
     /// cooling to `p.text`.
     pub fn spans(&self, t: f64, query: &str, p: &Palette) -> Vec<Span> {
-        let hot = Color::WHITE.mix(p.magenta, 0.4);
+        let hot = Color::WHITE.mix(p.glow2, 0.4);
         let mut spans = Vec::new();
         for g in &self.glyphs {
             let Some(chars) = query.get(g.start..g.end) else {
                 continue;
             };
+            if g.theme == Theme::Sigil {
+                // Hidden until its rune has dissolved into it, then cooling from gold.
+                let gold = p.glow.mix(Color::WHITE, 0.15);
+                for (k, i, c) in chars_of(query, g.start, g.end) {
+                    let v = g.landed(t, k);
+                    let shown = v.map(|v| v - sigil::HOLD - sigil::DISSOLVE);
+                    let color = match shown {
+                        Some(s) if s >= 0.0 => {
+                            let heat = 1.0 - (s / sigil::COOL).min(1.0);
+                            p.text.mix(gold, heat * heat)
+                        }
+                        _ => Color::TRANSPARENT,
+                    };
+                    spans.push(Span::new(i, i + c.len_utf8()).color(color));
+                }
+                continue;
+            }
             let age = g.born.map_or(0.0, |(b, _)| (t - b) as f32);
             for (k, (i, c)) in chars.char_indices().enumerate() {
                 let landed = age - g.flight - k as f32 * stagger(g);
@@ -211,7 +259,6 @@ impl Spells {
         if !self.active() {
             return None;
         }
-        let style = query_style();
         let mut shape = Shape::new();
         let mut layer = el()
             .key("spells")
@@ -228,10 +275,36 @@ impl Spells {
             // Unstamped (the edit came after this frame's poll), it shows as just deleted.
             let (born, tip) = g.born.unwrap_or((t, WAND_CENTER));
             let age = (t - born) as f32;
+            let style = query_style(g.theme);
+            if g.theme == Theme::Sigil {
+                // Each letter turns back into its rune and is drawn in, nearest the wand first.
+                let n = g.text.chars().count();
+                let mut x = g.x;
+                for (k, c) in g.text.chars().enumerate() {
+                    let w = width(&c.to_string(), style);
+                    let delay = if n > 1 {
+                        k as f32 * sigil::ERASE_STAGGER
+                    } else {
+                        0.0
+                    };
+                    let spot = sigil::Spot {
+                        c,
+                        center: [x + w / 2.0, ROW_MID],
+                        left: x,
+                        top: ROW_MID - 14.0,
+                        style,
+                    };
+                    for e in sigil::leaving(&spot, tip, age - delay, p) {
+                        layer = layer.child(e);
+                    }
+                    x += w;
+                }
+                continue;
+            }
             // The ghost: the deleted text, paling, rising and fading from where it stood.
             let fade = 1.0 - (age / FADE).min(1.0);
             if fade > 0.0 {
-                let color = p.text.mix(p.violet, 1.0 - fade).alpha(0.85 * fade * fade);
+                let color = p.text.mix(p.glow, 1.0 - fade).alpha(0.85 * fade * fade);
                 let rise = 8.0 * ease_out(1.0 - fade);
                 layer = layer.child(
                     el().absolute(g.x, ROW_MID - 14.0 - rise)
@@ -252,7 +325,7 @@ impl Spells {
                 }
                 let lift = -(8.0 + 18.0 * hash(g.seed, k * 3 + 2));
                 let at = arc(from, tip, lift, ease_in_out(u));
-                let color = p.violet.mix(Color::WHITE, 0.35);
+                let color = p.glow.mix(Color::WHITE, 0.35);
                 shape = spark(shape, at, 1.4 + 0.8 * (1.0 - u), color, 0.9);
             }
         }
@@ -260,6 +333,29 @@ impl Spells {
         for g in &self.glyphs {
             let Some((born, from)) = g.born else { continue };
             let age = (t - born) as f32;
+            let style = query_style(g.theme);
+            if g.theme == Theme::Sigil {
+                for (k, i, c) in chars_of(query, g.start, g.end) {
+                    let to = char_center(query, i, c, style);
+                    let orb = sigil::Orb::new(from, to, orb_seed(g.seed, k));
+                    let launched = age - k as f32 * stagger(g);
+                    shape = orb.draw(shape, launched, p);
+                    if let Some(v) = g.landed(t, k) {
+                        let left = FIELD_X + width(&query[..i], style);
+                        let spot = sigil::Spot {
+                            c,
+                            center: to,
+                            left,
+                            top: ROW_MID - 14.0,
+                            style,
+                        };
+                        for e in sigil::arriving(&spot, v, p) {
+                            layer = layer.child(e);
+                        }
+                    }
+                }
+                continue;
+            }
             let to = glyph_center(query, g.start, g.end, style);
             let lift = -(16.0 + 0.06 * (to[0] - from[0]).abs()) * (0.8 + 0.4 * hash(g.seed, 9));
             let u = age / g.flight;
@@ -274,7 +370,7 @@ impl Spells {
                     let color = if k == 0 {
                         Color::WHITE
                     } else {
-                        p.magenta.mix(p.violet, k as f32 / TRAIL as f32)
+                        p.glow2.mix(p.glow, k as f32 / TRAIL as f32)
                     };
                     let at = arc(from, to, lift, smoothstep(0.0, 1.0, back));
                     shape = spark(shape, at, 0.6 + 1.6 * fade, color, fade);
@@ -284,7 +380,7 @@ impl Spells {
                 // of motes flies out from them.
                 let v = (age - g.flight) / 0.28;
                 if v < 1.0 {
-                    let color = Color::WHITE.mix(p.magenta, 0.3 * v);
+                    let color = Color::WHITE.mix(p.glow2, 0.3 * v);
                     shape = star(
                         shape,
                         [to[0] + 3.0, to[1] - 12.0],
@@ -301,7 +397,7 @@ impl Spells {
                             shape,
                             at,
                             1.4 * (1.0 - v),
-                            p.violet.mix(Color::WHITE, 0.5),
+                            p.glow.mix(Color::WHITE, 0.5),
                             1.0 - v,
                         );
                     }
@@ -323,6 +419,63 @@ impl Glyphs {
         // Bytes bound it; good enough for a stagger's length.
         self.end - self.start
     }
+
+    /// Sigil: seconds since character `k`'s orb landed (negative before), once stamped.
+    fn landed(&self, t: f64, k: usize) -> Option<f32> {
+        let (born, _) = self.born?;
+        let flight = *self.flights.get(k)?;
+        Some((t - born) as f32 - k as f32 * stagger(self) - flight - sigil::LAND)
+    }
+
+    /// How long its spell lasts from when it was stamped.
+    fn lasts(&self) -> f32 {
+        match self.theme {
+            Theme::Arcane => self.flight + stagger(self) * self.chars() as f32 + HEAT,
+            Theme::Sigil => {
+                let slowest = self
+                    .flights
+                    .iter()
+                    .enumerate()
+                    .map(|(k, f)| k as f32 * stagger(self) + f)
+                    .fold(0.0, f32::max);
+                slowest + sigil::LAND + sigil::HOLD + sigil::DISSOLVE + sigil::COOL
+            }
+        }
+    }
+}
+
+impl Ghost {
+    fn lasts(&self) -> f32 {
+        match self.theme {
+            Theme::Arcane => FADE.max(dust_end(self)),
+            Theme::Sigil => sigil::absorb_end(self.text.chars().count()),
+        }
+    }
+}
+
+/// The characters of bytes `start..end` of `query`: their order, byte offset, and character.
+fn chars_of(
+    query: &str,
+    start: usize,
+    end: usize,
+) -> impl Iterator<Item = (usize, usize, char)> + '_ {
+    query
+        .get(start..end)
+        .unwrap_or("")
+        .char_indices()
+        .enumerate()
+        .map(move |(k, (i, c))| (k, start + i, c))
+}
+
+/// The middle of character `c` at byte `i` of `query`, in window points.
+fn char_center(query: &str, i: usize, c: char, style: TextStyle) -> [f32; 2] {
+    let left = width(&query[..i], style);
+    [FIELD_X + left + width(&c.to_string(), style) / 2.0, ROW_MID]
+}
+
+/// Each character's orb its own path.
+fn orb_seed(seed: u32, k: usize) -> u32 {
+    seed.wrapping_mul(131).wrapping_add(k as u32 * 17 + 3)
 }
 
 fn stagger(g: &Glyphs) -> f32 {

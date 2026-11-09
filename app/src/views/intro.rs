@@ -131,7 +131,7 @@ impl Intro {
                 y: 0.0,
                 blur: 18.0,
                 spread: 0.0,
-                color: p.magenta.alpha(0.7),
+                color: p.glow2.alpha(0.7),
                 inset: false,
             })
             .sequence(self.at(RING, GROW - 0.02));

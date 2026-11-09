@@ -195,7 +195,13 @@ fn opening_plays_the_intro_from_a_closed_pose() {
     }
     assert!(rising > 0.05 && rising < 0.95, "it fades in: {rising}");
     assert!((opacity(&rt) - 1.0).abs() < 0.01, "and lands open");
-    assert!(rt.find("burst-1").is_some());
+    assert!(
+        rt.find("burst-1").is_none(),
+        "Sigil inscribes a sigil instead of a burst"
+    );
+    rt.update(|s, _| s.set_theme(crate::views::theme::Theme::Arcane));
+    settle(&mut rt);
+    assert!(rt.find("burst-1").is_some(), "Arcane's burst");
 
     // The next opening replays it.
     rt.update(|s, _| s.hide_panel());
@@ -220,7 +226,14 @@ fn closing_disperses_before_the_window_hides_and_reopening_mid_way_plays_the_int
     settle(&mut rt);
     assert!(rt.state.closing, "the exit plays");
     assert_eq!(rt.state.outro, 1);
-    assert!(rt.find("dust-1").is_some(), "with stardust");
+    assert!(rt.find("seal-1").is_some(), "Sigil seals over the wand");
+    rt.update(|s, _| s.set_theme(crate::views::theme::Theme::Arcane));
+    rt.frame(1.0 / 60.0);
+    assert!(
+        rt.find("dust-1").is_some(),
+        "Arcane disperses into stardust"
+    );
+    rt.update(|s, _| s.set_theme(crate::views::theme::Theme::Sigil));
     assert_eq!(log(&mut rt), ["hide-panel"]);
     rt.update(|s, _| s.finish_close(1));
     assert!(!rt.state.closing);
@@ -484,7 +497,7 @@ fn the_wand_answers_the_bar() {
     let spans = rt
         .state
         .wand
-        .spans("hello", &crate::views::palette::arcane());
+        .spans("hello", &crate::views::theme::Theme::Arcane.palette());
     assert_eq!(
         spans.len(),
         5,
@@ -510,7 +523,7 @@ fn typing_keeps_frames_coming_until_the_text_is_written() {
     let mut rt = runtime(fixtures::root);
     rt.poll = crate::spec().poll;
     settle(&mut rt);
-    let p = crate::views::palette::arcane();
+    let p = crate::views::theme::Theme::Arcane.palette();
     let hidden = |rt: &Runtime<Cantrip>| {
         let query = rt.state.field.text.clone();
         rt.state
@@ -571,8 +584,15 @@ fn opening_the_wand_comes_first_and_casts_the_bar() {
         rt.frame(1.0 / 60.0);
     }
     assert!(
-        rt.find("hero").is_none(),
+        !rt.state.wand.flying(),
         "the wand is home in the search row by 0.6 s"
+    );
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.find("hero").is_none(),
+        "and the sigil has faded by 0.8 s"
     );
 }
 

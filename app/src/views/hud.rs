@@ -6,7 +6,8 @@ use std::f32::consts::FRAC_PI_2;
 use rune::{Color, Cx, El, Shadow, TextStyle, el, row, text};
 
 use super::intro::Intro;
-use super::{palette, play};
+use super::play;
+use super::theme::Theme;
 use crate::icons::{self, Icon};
 
 pub const SIZE: (f32, f32) = (520.0, 96.0);
@@ -14,12 +15,14 @@ pub const SIZE: (f32, f32) = (520.0, 96.0);
 #[derive(Default)]
 pub struct Hud {
     pub message: String,
+    /// The bar's theme, which the HUD wears too.
+    pub theme: Theme,
     /// Counts messages; each one replays the pop-in.
     pub shown: u64,
 }
 
 pub fn view(h: &Hud, cx: &mut Cx<Hud>) -> El {
-    let p = palette::arcane();
+    let p = h.theme.palette();
     let intro = Intro::new(h.shown);
     let spark = el()
         .size(22.0, 22.0)
@@ -28,7 +31,7 @@ pub fn view(h: &Hud, cx: &mut Cx<Hud>) -> El {
         .radial_gradient(
             [0.35, 0.3],
             20.0,
-            [(0.0, p.violet.alpha(0.7)), (1.0, p.magenta.alpha(0.15))],
+            [(0.0, p.glow.alpha(0.7)), (1.0, p.glow2.alpha(0.15))],
         )
         .child(icons::view(
             &Icon::Symbol("wand.and.sparkles".into()),
@@ -60,7 +63,7 @@ pub fn view(h: &Hud, cx: &mut Cx<Hud>) -> El {
             y: 0.0,
             blur: 24.0,
             spread: 0.0,
-            color: p.violet.alpha(0.35),
+            color: p.glow.alpha(0.35),
             inset: false,
         })
         .child(play(spark, intro.map(Intro::orb)))

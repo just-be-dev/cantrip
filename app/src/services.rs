@@ -2,6 +2,7 @@
 //! NSWorkspace and user defaults. Headless runs and tests have none of them (`live` is false),
 //! and record what they would have done in `log` instead.
 
+use crate::views::theme::Theme;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -101,13 +102,14 @@ impl Services {
     }
 
     /// A small message that fades in over the screen and goes away by itself.
-    pub fn hud(&mut self, message: &str) {
+    pub fn hud(&mut self, message: &str, theme: Theme) {
         let Some(hud) = &self.hud else {
             return self.log.push(format!("hud {message}"));
         };
         let message = message.to_string();
         hud.update(move |h, _| {
             h.message = message;
+            h.theme = theme;
             h.shown += 1;
         });
         hud.set_display(DisplayTarget::UnderPointer);
@@ -151,6 +153,23 @@ impl Services {
     pub fn save_usage(&mut self, usage: &HashMap<String, i64>) {
         if self.live {
             crate::platform::save_usage(usage)
+        }
+    }
+
+    /// The theme last chosen in the bar, if any.
+    pub fn load_theme(&self) -> Option<Theme> {
+        if self.live {
+            crate::platform::load_string("theme").and_then(|id| Theme::parse(&id))
+        } else {
+            None
+        }
+    }
+
+    pub fn save_theme(&mut self, theme: Theme) {
+        if self.live {
+            crate::platform::save_string("theme", theme.id());
+        } else {
+            self.log.push(format!("theme {}", theme.id()));
         }
     }
 }

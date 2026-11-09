@@ -12,6 +12,8 @@ pub type Scene = (&'static str, fn(&mut Cantrip));
 pub const SCENES: &[Scene] = &[
     ("root", root),
     ("opening", opening),
+    ("root-arcane", root_arcane),
+    ("opening-arcane", opening_arcane),
     ("closing", closing),
     ("query", query),
     ("empty", empty),
@@ -136,6 +138,18 @@ pub fn root(s: &mut Cantrip) {
 pub fn opening(s: &mut Cantrip) {
     root(s);
     s.revealed = false;
+}
+
+/// The root search in the Arcane theme (the others are in Sigil, the default).
+fn root_arcane(s: &mut Cantrip) {
+    root(s);
+    s.set_theme(crate::views::theme::Theme::Arcane);
+}
+
+/// The opening in the Arcane theme.
+fn opening_arcane(s: &mut Cantrip) {
+    opening(s);
+    s.set_theme(crate::views::theme::Theme::Arcane);
 }
 
 /// Mid-exit: the glass disperses into stardust (render it over time with `--at`/`--strip`).
