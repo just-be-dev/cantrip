@@ -248,20 +248,19 @@ impl Wand {
             return dirty;
         }
         let scale = self.scale.get();
+        // A window draws only when asked: every frame asks for the next one, at once while
+        // anything moves (`Pixels::set` here doesn't: this frame's own draw takes it), else at
+        // the idle rate. Reduce Motion asks for nothing once it has drawn.
         let due = match self.drawn {
             None => true,
             Some((_, drawn_at)) if drawn_at != scale => true,
             Some(_) if self.still => false,
-            Some((last, _)) => {
-                let gap = if busy { 0.0 } else { 1.0 / IDLE_FPS };
-                // Setting pixels wakes the next frame; settled, wait out the gap instead.
-                let wait = gap - (t - last);
-                if wait > 0.002 {
-                    tx.wake_after(Duration::from_secs_f64(wait));
-                }
-                wait <= 0.002
-            }
+            Some((last, _)) => busy || t - last >= 1.0 / IDLE_FPS - 0.002,
         };
+        if !self.still {
+            let next = if busy { 0.0 } else { 1.0 / IDLE_FPS };
+            tx.wake_after(Duration::from_secs_f64(next));
+        }
         if due {
             let (side, rgba) = self.render(scale, &palette::arcane());
             self.pixels.set(side, side, rgba);

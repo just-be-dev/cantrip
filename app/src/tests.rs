@@ -497,3 +497,44 @@ fn the_wand_answers_the_bar() {
         "mid-cast, the wand keeps its place over the spell"
     );
 }
+
+/// A live window draws only when something asks for a frame. While the wand writes the query,
+/// every frame must ask for the next, or the bar freezes with the characters still hidden.
+#[test]
+fn typing_keeps_frames_coming_until_the_text_is_written() {
+    let mut rt = runtime(fixtures::root);
+    rt.poll = crate::spec().poll;
+    settle(&mut rt);
+    let p = crate::views::palette::arcane();
+    let hidden = |rt: &Runtime<Cantrip>| {
+        let query = rt.state.field.text.clone();
+        rt.state
+            .wand
+            .spans(&query, &p)
+            .iter()
+            .any(|s| s.color.unwrap().a < 0.01)
+    };
+    for c in ["t", "e", "s"] {
+        rt.key(Key::Text(c.into()).into());
+        // 150 ms apart, as a person types.
+        for _ in 0..9 {
+            rt.frame(1.0 / 60.0);
+            assert!(
+                rt.animating || rt.wake_deadline().is_some(),
+                "a frame asks for the next while sparks fly"
+            );
+        }
+    }
+    // Only frames that were asked for: stop as soon as nothing asks.
+    let mut frames = 0;
+    while rt.animating || rt.wake_deadline().is_some() {
+        rt.frame(1.0 / 60.0);
+        frames += 1;
+        if !hidden(&rt) && frames > 120 {
+            break;
+        }
+        assert!(frames < 600, "the wand settles");
+    }
+    assert_eq!(rt.state.field.text, "tes");
+    assert!(!hidden(&rt), "every character was written");
+}
