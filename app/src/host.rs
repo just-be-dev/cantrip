@@ -221,9 +221,9 @@ pub fn find_bun(config: &Config) -> Option<PathBuf> {
     if let Some(env) = std::env::var_os("CANTRIP_BUN") {
         candidates.push(env.into());
     }
-    // The project's pinned bun, recorded by scripts/bundle.sh at build time.
-    if let Some(pinned) = crate::platform::info_string("CantripBun") {
-        candidates.push(pinned.into());
+    // The bun inside Cantrip.app (scripts/bundle.sh copies the version mise.toml pins).
+    if let Some(resources) = crate::platform::bundle_resources() {
+        candidates.push(resources.join("bun/bun"));
     }
     candidates.extend([
         home.join(".bun/bin/bun"),

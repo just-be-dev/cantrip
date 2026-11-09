@@ -19,7 +19,7 @@ menus and status items). The commands, called **spells**, are
 mise install            # bun 1.4.4 (pinned in mise.toml)
 mise run install        # runtime deps
 mise run dev            # run from source; the bar opens at launch
-mise run install-app    # build Cantrip.app → ~/Applications and launch it
+mise run install-app    # build Cantrip.app → /Applications and launch it
 ```
 
 Your spells live in your **grimoire**, `~/.config/cantrip/grimoire/`. On first
@@ -262,10 +262,11 @@ $ cantrip            # lists every command from your grimoire
 ```
 
 The hotkey takes `cmd`, `option`, `ctrl`, and `shift`, plus a key
-(`space`, `a`–`z`, `0`–`9`, …). Without a `bun` entry, Cantrip uses the bun
-that `scripts/bundle.sh` found at build time (the mise pin), then `~/.bun/bin`,
-the mise shims, Homebrew, and your login shell. It needs bun ≥ 1.4.4; the host
-log warns if it's older.
+(`space`, `a`–`z`, `0`–`9`, …). Without a `bun` entry, Cantrip runs the bun
+inside the app (`scripts/bundle.sh` copies the version mise.toml pins), so the
+installed app needs no bun of its own. A `cargo run` build looks in
+`~/.bun/bin`, the mise shims, Homebrew, and your login shell. It needs bun ≥
+1.4.4; the host log warns if it's older.
 
 Environment variables, for development:
 

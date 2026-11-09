@@ -51,5 +51,5 @@ description = "Build build/Cantrip.app"
 run = "scripts/bundle.sh"
 
 [tasks.install-app]
-description = "Build, copy to ~/Applications, and launch"
+description = "Build Cantrip.app, install it to /Applications, and launch it"
 run = "scripts/bundle.sh --install"

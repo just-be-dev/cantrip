@@ -8,6 +8,12 @@
 	<string>Cantrip</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.just-be.cantrip</string>
+	<key>CFBundleIconFile</key>
+	<string>Cantrip</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>A command bar for macOS. Spells run on Bun.</string>
 	<key>CFBundleExecutable</key>
 	<string>Cantrip</string>
 	<key>CFBundlePackageType</key>

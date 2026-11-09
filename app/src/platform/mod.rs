@@ -77,12 +77,6 @@ pub fn bundle_resources() -> Option<PathBuf> {
         .map(|p| PathBuf::from(p.to_string()))
 }
 
-/// A string from the bundle's Info.plist.
-pub fn info_string(key: &str) -> Option<String> {
-    let value = NSBundle::mainBundle().objectForInfoDictionaryKey(&NSString::from_str(key))?;
-    value.downcast::<NSString>().ok().map(|s| s.to_string())
-}
-
 // MARK: User defaults (shared with the Swift app's, by bundle id)
 
 pub fn load_usage() -> HashMap<String, i64> {
