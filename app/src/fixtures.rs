@@ -133,7 +133,7 @@ pub fn root(s: &mut Cantrip) {
 }
 
 /// Shown and waiting for the keyboard: `scripts/open.json` focuses it and the intro plays.
-fn opening(s: &mut Cantrip) {
+pub fn opening(s: &mut Cantrip) {
     root(s);
     s.revealed = false;
 }

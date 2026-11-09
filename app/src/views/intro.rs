@@ -1,6 +1,7 @@
-//! The bar's entrance: it swells in with a little overshoot, the aurora blooms, the wand
-//! flares and throws sparks, the glowing rule draws itself across, and the rows rise in one
-//! after another. All of it is `El::sequence` on Rune's render clock: no state changes while
+//! The bar's entrance. The wand comes first, alone, and twirls in (`wand.rs`); at `GROW` it
+//! casts the bar, which swells out of its tip with a shockwave and sparks while the wand flies
+//! home to the search row. Then the aurora blooms, the glowing rule draws itself across, and
+//! the rows rise in one after another. All of it is `El::sequence` on Rune's render clock: no state changes while
 //! it plays, and it sleeps once it lands. Reduce Motion lands every final pose at once.
 
 use rune::{Beat, Color, Easing, El, Sequence, Shadow, el};
@@ -10,13 +11,20 @@ use super::palette::Palette;
 /// Holds the panel invisible while it's hidden, so it never flashes its last frame.
 pub const CLOSED: &[Beat] = &[Beat::new(0.0).opacity(0.0), Beat::new(0.001).opacity(0.0)];
 
+/// When the wand casts the bar: seconds into the opening.
+pub const GROW: f64 = 0.3;
+
+/// The bar swells out of the wand's tip (the shell's origin). Until then it holds at a speck
+/// under the tip: a native blur ignores opacity, so it hides by size.
 const PANEL: &[Beat] = &[
-    Beat::new(0.0).opacity(0.0).scale(0.94),
-    Beat::new(0.2)
+    Beat::new(0.0).opacity(0.0).scale(0.001),
+    Beat::new(GROW).opacity(0.0).scale(0.001),
+    Beat::new(GROW + 0.07)
         .opacity(1.0)
-        .scale(1.012)
-        .easing(Easing::ENTER),
-    Beat::new(0.42).scale(1.0),
+        .scale(0.2)
+        .easing(Easing::EASE_IN),
+    Beat::new(GROW + 0.32).scale(1.015).easing(Easing::ENTER),
+    Beat::new(GROW + 0.44).scale(1.0),
 ];
 const BLOOM: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.45),
@@ -26,6 +34,7 @@ const BLOOM: &[Beat] = &[
         .easing(Easing::ENTER),
     Beat::new(1.1).scale(1.0),
 ];
+/// The HUD's spark pops in.
 const ORB: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.4),
     Beat::new(0.24)
@@ -48,9 +57,9 @@ const SPARKS: &[Beat] = &[
 const RING: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.4),
     Beat::new(0.06).opacity(0.9).scale(0.6),
-    Beat::new(0.6)
+    Beat::new(0.42)
         .opacity(0.0)
-        .scale(2.4)
+        .scale(4.0)
         .easing(Easing::EASE_OUT),
 ];
 const TWINKLE: &[Beat] = &[
@@ -124,16 +133,17 @@ impl Intro {
         self.at(PANEL, 0.0)
     }
     pub fn bloom(self, i: usize) -> Sequence {
-        self.at(BLOOM, 0.04 + i as f64 * 0.08)
-    }
-    pub fn orb(self) -> Sequence {
-        self.at(ORB, 0.05)
+        self.at(BLOOM, GROW + 0.04 + i as f64 * 0.08)
     }
     pub fn rule(self) -> Sequence {
-        self.at(DRAW, 0.12)
+        self.at(DRAW, GROW + 0.14)
     }
     pub fn row(self, i: usize) -> Sequence {
-        self.at(RISE, 0.14 + i as f64 * 0.032)
+        self.at(RISE, GROW + 0.16 + i as f64 * 0.032)
+    }
+    /// The HUD's spark pops in with its capsule.
+    pub fn orb(self) -> Sequence {
+        self.at(ORB, 0.05)
     }
     /// The HUD's capsule pops in.
     pub fn hud(self) -> Sequence {
@@ -146,7 +156,7 @@ impl Intro {
         self.row(0)
     }
     pub fn footer(self) -> Sequence {
-        self.at(FADE, 0.22)
+        self.at(FADE, GROW + 0.24)
     }
 
     /// Stars that twinkle across the search row from the wand outward, as if the bar were
@@ -165,7 +175,7 @@ impl Intro {
                 p.violet.mix(Color::WHITE, 0.45),
                 Color::WHITE,
             ][c];
-            let delay = 0.08 + (x / width) as f64 * 0.42;
+            let delay = GROW + 0.1 + (x / width) as f64 * 0.42;
             layer = layer.child(
                 el().absolute(x - size / 2.0, y - size / 2.0)
                     .size(size, size)
@@ -181,12 +191,12 @@ impl Intro {
         layer
     }
 
-    /// Sparks and a shockwave thrown from the wand, centred on (`cx`, `cy`). Keyed by the
-    /// opening, so each one is a fresh burst.
+    /// Sparks and a shockwave thrown from the wand's tip as it casts the bar, centred on
+    /// (`cx`, `cy`). Keyed by the opening, so each one is a fresh burst.
     pub fn burst(self, cx: f32, cy: f32, p: Palette) -> El {
         const SIZE: f32 = 150.0;
         const SPARK_COUNT: usize = 14;
-        let mut sparks = el().size(SIZE, SIZE).sequence(self.at(SPARKS, 0.07));
+        let mut sparks = el().size(SIZE, SIZE).sequence(self.at(SPARKS, GROW - 0.01));
         for i in 0..SPARK_COUNT {
             let angle = i as f32 / SPARK_COUNT as f32 * std::f32::consts::TAU + 0.2;
             let (radius, size) = if i % 2 == 0 { (50.0, 5.0) } else { (36.0, 3.0) };
@@ -223,7 +233,7 @@ impl Intro {
                 color: p.magenta.alpha(0.7),
                 inset: false,
             })
-            .sequence(self.at(RING, 0.04));
+            .sequence(self.at(RING, GROW - 0.03));
         el().key(format!("burst-{}", self.n))
             .a11y_hidden()
             .inert()

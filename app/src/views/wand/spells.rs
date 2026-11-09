@@ -366,7 +366,7 @@ pub fn diff<'a>(old: &'a str, new: &str) -> (usize, &'a str, usize) {
 }
 
 /// A glowing dot: a hot core in soft rings.
-fn spark(shape: Shape, at: [f32; 2], r: f32, color: Color, alpha: f32) -> Shape {
+pub(super) fn spark(shape: Shape, at: [f32; 2], r: f32, color: Color, alpha: f32) -> Shape {
     if alpha <= 0.01 || r <= 0.05 {
         return shape;
     }

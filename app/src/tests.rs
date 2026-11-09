@@ -181,7 +181,12 @@ fn opening_plays_the_intro_from_a_closed_pose() {
     assert!(opacity(&rt) < 0.01, "and waits for the keyboard");
     rt.update(|s, _| s.focus_changed(true));
     assert_eq!(rt.state.intro, 1);
+    // The wand comes first; the bar swells out of it at `intro::GROW`.
     for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(opacity(&rt) < 0.01, "the bar waits for the wand to cast it");
+    for _ in 0..16 {
         rt.frame(1.0 / 60.0);
     }
     let rising = opacity(&rt);
@@ -537,4 +542,36 @@ fn typing_keeps_frames_coming_until_the_text_is_written() {
     }
     assert_eq!(rt.state.field.text, "tes");
     assert!(!hidden(&rt), "every character was written");
+}
+
+#[test]
+fn opening_the_wand_comes_first_and_casts_the_bar() {
+    let mut rt = runtime(fixtures::opening);
+    rt.poll = crate::spec().poll;
+    rt.update(|s, _| s.focus_changed(true));
+    let panel = |rt: &Runtime<Cantrip>| rt.presented("shell").map(|p| (p.0, p.1));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.find("hero").is_some(),
+        "the wand is up first, over the window"
+    );
+    let (rect, _) = panel(&rt).unwrap();
+    assert!(rect[2] < 40.0, "the bar is still a speck: {rect:?}");
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (rect, opacity) = panel(&rt).unwrap();
+    assert!(
+        opacity > 0.9 && rect[2] > 600.0,
+        "the bar has swelled out: {rect:?}"
+    );
+    for _ in 0..60 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.find("hero").is_none(),
+        "the wand is home in the search row"
+    );
 }

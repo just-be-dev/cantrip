@@ -1,6 +1,9 @@
 //! The wand in the search bar: a small 3D model, rendered on the CPU into `Pixels` on the frame
-//! clock, with a mind of its own (`motion.rs`). Each opening it twirls in and throws sparkles
-//! as the orb would pop (`intro.rs`). Then it reacts to the bar: it flicks with the selection
+//! clock, with a mind of its own (`motion.rs`). Each opening it comes first, alone and large in
+//! the middle of where the bar will be, and twirls in; it casts the bar, which swells out of its
+//! tip (`intro.rs`), then shrinks as it flies home to the search row, trailing sparks. While it
+//! flies it draws into its own larger image over the window (`hero_view`), so it stays sharp at
+//! any size. Then it reacts to the bar: it flicks with the selection
 //! and leans with the scroll, aims at the field and writes each typed character with a spark
 //! (`spells.rs`), takes deleted ones back as dust, droops when nothing matches, perks up under
 //! the pointer, twirls when clicked, thrusts when something is cast, and spins away when the
@@ -20,24 +23,40 @@ use std::cell::Cell;
 use std::f32::consts::{FRAC_PI_4, TAU};
 use std::time::Duration;
 
-use rune::{Color, El, Pixels, Span, Tx, el};
+use rune::{Color, El, Pixels, Shape, Span, Transition, Tx, canvas, el};
 
 use super::palette::{self, Palette};
 use model::{Looks, MESH, rgb};
 pub use motion::Gesture;
-use motion::{BLEND, Mood, Puff, Stance, ease_in_out, ease_out, lerp, smoothstep};
+use motion::{BLEND, Mood, Puff, Stance, ease_in_out, ease_out, flare, lerp, smoothstep};
 use raster::{Canvas, M3, V3, Vert, add, mul, norm, sub};
 use sparkle::{Mote, ORBIT, ORBITERS, Spawner, Star, orbiter};
 use spells::{Spells, Stamped};
 
-/// Its square, in points: larger than the orb, so sparkles can fly past the orb's edge.
+/// Its square, in points: larger than its slot, so sparkles can fly past the slot's edge.
 pub const CANVAS: f32 = 60.0;
 /// Each pixel is the mean of this many samples a side.
 const SUPERSAMPLE: usize = 2;
-/// The twirl starts with the orb's pop (`intro::ORB`).
-const DELAY: f64 = 0.05;
-/// Long enough for the opening burst to burn out.
-const FLOURISH: f64 = 1.4;
+/// The opening starts with the intro's sequences.
+const DELAY: f64 = 0.0;
+/// Long enough for the opening to land and the rock to ease in.
+const FLOURISH: f64 = 2.0;
+
+// The opening, in seconds from its start. The wand twirls in at `HERO`, `HERO_ZOOM` times its
+// size, until it casts the bar at `CAST` (`intro::GROW`); it flies home from `FLY` to `LAND`.
+const CAST: f32 = super::intro::GROW as f32;
+const FLY: f32 = 0.4;
+const LAND: f32 = 0.88;
+/// Its flight's sparks linger this long after it lands.
+const AFTERGLOW: f32 = 0.3;
+const HERO_ZOOM: f32 = 3.0;
+/// The large image's square, in points: the wand at `HERO_ZOOM` with room for its stars.
+const HERO_CANVAS: f32 = 150.0;
+/// Where it appears, in window points: a little above the middle of the bar to come.
+const HERO: [f32; 2] = [
+    super::WINDOW_SIZE.0 / 2.0,
+    super::MARGIN + super::PANEL_SIZE.1 * 0.42,
+];
 const IDLE_FPS: f64 = 30.0;
 /// The wand stays in the search bar this long into a cast, even as a spell opens over it.
 const CAST_HOLD: f32 = 0.5;
@@ -58,8 +77,18 @@ const ROCK: f32 = 0.35;
 const ROCK_PERIOD: f32 = 5.0;
 
 /// The opening's sparkles, shed from the tip along the twirl between these times.
-const TRAIL: (f32, f32) = (0.06, 0.5);
-const TRAIL_COUNT: u32 = 22;
+const TRAIL: (f32, f32) = (0.02, 0.28);
+const TRAIL_COUNT: u32 = 14;
+/// Thrown from the tip as it casts the bar.
+const CAST_PUFF: Puff = Puff {
+    at: 0.0,
+    count: 16,
+    aim: [0.3, 1.0, 0.3],
+    spread: 1.2,
+    speed: 1.8,
+    size: 0.09,
+    life: 0.28,
+};
 
 /// What the bar tells the wand each frame.
 pub struct Signals<'a> {
@@ -85,10 +114,15 @@ struct Playing {
 /// `Cantrip::animate_wand` calls `frame` at the start of every frame.
 pub struct Wand {
     pixels: Pixels,
+    /// The large image it draws into while it flies in.
+    hero: Pixels,
     /// The device scale the view last laid it out at.
     scale: Cell<f32>,
-    /// Frame time and scale of the image showing.
-    drawn: Option<(f64, f32)>,
+    /// Frame time, scale, and whether it was the large image, of the image showing.
+    drawn: Option<(f64, f32, bool)>,
+    /// Whether the last frame had the opening's layer up (`hero_view`).
+    heroing: bool,
+    cast: bool,
 
     /// The opening the current flourish belongs to, and the frame time it began.
     intro: u64,
@@ -120,8 +154,11 @@ pub struct Wand {
     spells: Spells,
     spelling: bool,
     casting: bool,
-    /// The tip, in points from the canvas's centre, as last posed.
+    /// The tip, in points from the canvas's centre at its size in the slot, as last posed.
     tip: [f32; 2],
+    /// Where its canvas is centred, in window points, and how large it is.
+    center: [f32; 2],
+    zoom: f32,
     pose: Pose,
     stance: Stance,
 }
@@ -136,8 +173,11 @@ impl Wand {
     pub fn new() -> Wand {
         Wand {
             pixels: Pixels::new(),
+            hero: Pixels::new(),
             scale: Cell::new(2.0),
             drawn: None,
+            heroing: false,
+            cast: true,
             intro: 0,
             began: None,
             still: false,
@@ -162,6 +202,8 @@ impl Wand {
             spelling: false,
             casting: false,
             tip: [0.0; 2],
+            center: super::WAND_CENTER,
+            zoom: 1.0,
             pose: Pose::new(Stance::default(), 0.0),
             stance: Stance::default(),
         }
@@ -216,6 +258,73 @@ impl Wand {
             .a11y_hidden()
     }
 
+    /// Seconds into the opening while it plays (not under Reduce Motion), before or after it
+    /// lands.
+    fn opening(&self) -> Option<f32> {
+        let s = (self.now - self.began?) as f32;
+        (!self.still && s < LAND + AFTERGLOW).then_some(s.max(0.0))
+    }
+
+    /// It's flying in: it draws over the window (`hero_view`), not in its slot.
+    pub fn flying(&self) -> bool {
+        self.opening().is_some_and(|s| s < LAND)
+    }
+
+    /// The opening over the window: the wand while it flies in, and the sparks it trails.
+    pub fn hero_view(&self, scale: f32, p: &Palette) -> Option<El> {
+        let s = self.opening()?;
+        let mut layer = el()
+            .key("hero")
+            .a11y_hidden()
+            .inert()
+            .pin(Some(0.0), Some(0.0), None, None)
+            .size(super::WINDOW_SIZE.0, super::WINDOW_SIZE.1)
+            .raise()
+            .transition(Transition::none())
+            .instant_changes();
+        // The trail: sparks left along its path home, the oldest faintest.
+        let mut trail = Shape::new();
+        for k in 1..=14u32 {
+            let back = s - k as f32 * 0.022;
+            if !(FLY..LAND).contains(&back) {
+                continue;
+            }
+            let (center, zoom) = placement(back);
+            let tip = [
+                center[0] + REST_TIP[0] * zoom,
+                center[1] + REST_TIP[1] * zoom,
+            ];
+            let fade = 1.0 - k as f32 / 15.0;
+            let jitter = |salt| (sparkle::hash(k + (back * 100.0) as u32, salt) - 0.5) * 8.0;
+            let color = p
+                .magenta
+                .mix(p.violet, k as f32 / 14.0)
+                .mix(Color::WHITE, 0.3 * fade);
+            trail = spells::spark(
+                trail,
+                [tip[0] + jitter(1), tip[1] + jitter(2)],
+                0.5 + 1.8 * fade,
+                color,
+                fade * (1.0 - ((s - LAND) / AFTERGLOW).clamp(0.0, 1.0) * 0.5),
+            );
+        }
+        layer = layer.child(
+            canvas(trail)
+                .absolute(0.0, 0.0)
+                .size(super::WINDOW_SIZE.0, super::WINDOW_SIZE.1),
+        );
+        if s < LAND {
+            self.scale.set(scale);
+            let (center, _) = placement(s);
+            layer = layer.child(
+                el().absolute(center[0] - HERO_CANVAS / 2.0, center[1] - HERO_CANVAS / 2.0)
+                    .size(HERO_CANVAS, HERO_CANVAS)
+                    .pixels(&self.hero),
+            );
+        }
+        Some(layer)
+    }
+
     /// Colours for the query's characters: hidden while their spark flies, then glowing.
     pub fn spans(&self, query: &str, p: &Palette) -> Vec<Span> {
         self.spells.spans(self.now, query, p)
@@ -239,9 +348,16 @@ impl Wand {
         tx: &mut Tx,
     ) -> bool {
         let busy = self.advance(t, &signals, still);
-        let dirty = self.spells.active() || self.spelling || self.casting != self.casting();
+        // The opening's layer moves every frame, and goes once it lands.
+        let heroing = self.opening().is_some();
+        let dirty = self.spells.active()
+            || self.spelling
+            || self.casting != self.casting()
+            || heroing
+            || self.heroing;
         self.spelling = self.spells.active();
         self.casting = self.casting();
+        self.heroing = heroing;
         if !self.shown {
             // Draw afresh when it's back.
             self.drawn = None;
@@ -251,11 +367,12 @@ impl Wand {
         // A window draws only when asked: every frame asks for the next one, at once while
         // anything moves (`Pixels::set` here doesn't: this frame's own draw takes it), else at
         // the idle rate. Reduce Motion asks for nothing once it has drawn.
+        let flying = self.flying();
         let due = match self.drawn {
             None => true,
-            Some((_, drawn_at)) if drawn_at != scale => true,
+            Some((_, drawn_at, hero)) if drawn_at != scale || hero != flying => true,
             Some(_) if self.still => false,
-            Some((last, _)) => busy || t - last >= 1.0 / IDLE_FPS - 0.002,
+            Some((last, _, _)) => busy || t - last >= 1.0 / IDLE_FPS - 0.002,
         };
         if !self.still {
             let next = if busy { 0.0 } else { 1.0 / IDLE_FPS };
@@ -263,8 +380,9 @@ impl Wand {
         }
         if due {
             let (side, rgba) = self.render(scale, &palette::arcane());
-            self.pixels.set(side, side, rgba);
-            self.drawn = Some((t, scale));
+            let pixels = if flying { &self.hero } else { &self.pixels };
+            pixels.set(side, side, rgba);
+            self.drawn = Some((t, scale, flying));
         }
         dirty
     }
@@ -281,7 +399,9 @@ impl Wand {
             self.motes.clear();
             self.spells.clear();
             self.trail = 0;
-            self.next_twinkle = t + DELAY;
+            self.cast = false;
+            // Idle twinkles wait until it's home.
+            self.next_twinkle = t + DELAY + LAND as f64;
             self.mood = Mood::Idle;
             self.mood_from = Stance::default();
             self.mood_since = f64::NEG_INFINITY;
@@ -300,7 +420,7 @@ impl Wand {
         if !self.shown {
             self.shown = true;
             // Back from a spell (not an opening, which has its own flourish).
-            if self.began.is_some_and(|b| t - b > 1.0) && !self.still {
+            if self.began.is_some_and(|b| t - b > (LAND + 0.5) as f64) && !self.still {
                 self.cues.push(Gesture::Return);
             }
         }
@@ -321,8 +441,8 @@ impl Wand {
             });
         }
         let tip = [
-            super::WAND_CENTER[0] + self.tip[0],
-            super::WAND_CENTER[1] + self.tip[1],
+            self.center[0] + self.tip[0] * self.zoom,
+            self.center[1] + self.tip[1] * self.zoom,
         ];
         for stamped in self.spells.stamp(t, tip, signals.query) {
             self.typed_at = t;
@@ -384,6 +504,10 @@ impl Wand {
         let focal = PT_PER_UNIT * DISTANCE;
         let z = DISTANCE - tip_world[2];
         self.tip = [focal * tip_world[0] / z, -focal * tip_world[1] / z];
+        (self.center, self.zoom) = match self.opening() {
+            Some(s) => placement(s),
+            None => (super::WAND_CENTER, 1.0),
+        };
 
         // Sparkles: gestures' puffs, the opening's trail, idle twinkles.
         let colors = sparkle_colors(&palette::arcane());
@@ -411,10 +535,15 @@ impl Wand {
                     spread: 0.6,
                     speed: 1.2,
                     size: 0.12,
-                    life: 0.8,
+                    life: 0.35,
                 };
                 self.motes
                     .extend(self.spawner.puff(t, tip_world, &out, &colors));
+            }
+            if !self.cast && s >= CAST {
+                self.cast = true;
+                self.motes
+                    .extend(self.spawner.puff(t, tip_world, &CAST_PUFF, &colors));
             }
         }
         if t >= self.next_twinkle && self.began.is_none_or(|b| t >= b) {
@@ -461,36 +590,36 @@ impl Wand {
         };
         let raw = (t - began) as f32;
         let s = raw.max(0.0);
-        // A full twirl, swinging back past upright and settling; the rock eases in after.
-        let spin = TAU * ease_out(s / 0.62);
-        let rock = ROCK * (TAU * (s - 0.62) / ROCK_PERIOD).sin() * smoothstep(0.62, 1.6, s);
-        let (swing, scale) = if s < 0.32 {
-            let k = ease_out(s / 0.32);
-            (lerp(0.9, -0.22, k), lerp(0.6, 1.04, k))
-        } else {
-            let k = ease_in_out((s - 0.32) / 0.3);
-            (lerp(-0.22, 0.0, k), lerp(1.04, 1.0, k))
-        };
-        // The tip star blooms as the burst leaves it, then breathes; it's out until the start.
-        const BLOOM: f32 = 0.18;
+        // It twirls in, growing and swinging upright, and is at rest exactly as it casts the
+        // bar (so the bar grows from where its tip is: `hero_tip`). It twirls again as it flies
+        // home, and the rock eases in once it's there.
+        let k = ease_out(s / CAST);
+        let flight = ease_in_out(((s - FLY) / (LAND - FLY)).clamp(0.0, 1.0));
+        let rock = ROCK * (TAU * (s - LAND) / ROCK_PERIOD).sin() * smoothstep(LAND, LAND + 1.0, s);
+        // The tip star is out until the start, glows as it twirls, blooms as it casts the
+        // bar, flashes as it lands, then breathes.
         let star = if raw < 0.0 {
             0.0
-        } else if s < BLOOM {
-            0.35
-        } else if s < 0.4 {
-            lerp(0.35, 1.35, ease_out((s - BLOOM) / (0.4 - BLOOM)))
-        } else if s < 0.75 {
-            lerp(1.35, 1.0, ease_in_out((s - 0.4) / 0.35))
+        } else if s < CAST - 0.06 {
+            0.45
+        } else if s < CAST + 0.06 {
+            lerp(0.45, 1.7, ease_out((s - (CAST - 0.06)) / 0.12))
+        } else if s < FLY + 0.1 {
+            lerp(
+                1.7,
+                1.0,
+                ease_in_out((s - (CAST + 0.06)) / (FLY + 0.04 - CAST)),
+            )
         } else {
-            1.0 + (breathe(s) - 1.0) * smoothstep(0.75, 1.3, s)
+            1.0 + 0.6 * flare(s - LAND) + (breathe(s) - 1.0) * smoothstep(LAND, LAND + 0.6, s)
         };
         Stance {
-            turn: spin + rock,
-            swing,
-            grow: scale - 1.0,
+            turn: TAU * k + TAU * flight + rock,
+            swing: lerp(0.9, 0.0, k),
+            grow: lerp(0.5, 1.0, k) - 1.0,
             star: star - 1.0,
             // The orbiting stars spiral out from the shaft as it twirls in.
-            reach: ease_out((s - 0.25) / 0.55) - 1.0,
+            reach: ease_out((s - 0.05) / 0.4) - 1.0,
             ..Stance::default()
         }
     }
@@ -544,9 +673,44 @@ impl Wand {
         stars
     }
 
-    /// The image as posed: its side in device pixels, and straight-alpha sRGB bytes.
+    /// The image as posed: its side in device pixels, and straight-alpha sRGB bytes. Flying,
+    /// it's the large image, with the wand at its size in flight.
     fn render(&self, scale: f32, p: &Palette) -> (u32, Vec<u8>) {
-        render(&self.pose, self.stars(p), scale, p)
+        let size = if self.flying() { HERO_CANVAS } else { CANVAS };
+        render(&self.pose, self.stars(p), size, scale, self.zoom, p)
+    }
+}
+
+/// Where the wand's canvas is centred (window points) and how large the wand is, `s` seconds
+/// into the opening: at `HERO` until `FLY`, then swooping up and over into its slot.
+fn placement(s: f32) -> ([f32; 2], f32) {
+    let home = super::WAND_CENTER;
+    let k = ease_in_out(((s - FLY) / (LAND - FLY)).clamp(0.0, 1.0));
+    let bend = [home[0] + 0.6 * (HERO[0] - home[0]), home[1] - 40.0];
+    let m = 1.0 - k;
+    let at = |i: usize| m * m * HERO[i] + 2.0 * m * k * bend[i] + k * k * home[i];
+    ([at(0), at(1)], lerp(HERO_ZOOM, 1.0, k))
+}
+
+/// The tip at rest, in points from the canvas's centre at the slot's size.
+const REST_TIP: [f32; 2] = [9.88, -8.98];
+
+/// Where the tip is as the wand casts the bar, in window points: the bar grows from here.
+pub fn hero_tip() -> [f32; 2] {
+    [
+        HERO[0] + REST_TIP[0] * HERO_ZOOM,
+        HERO[1] + REST_TIP[1] * HERO_ZOOM,
+    ]
+}
+
+impl Wand {
+    /// The tip at rest, measured from the model (`REST_TIP` keeps it as a constant).
+    #[cfg(test)]
+    fn rest_tip() -> [f32; 2] {
+        let w = Pose::new(Stance::default(), 0.0).place(TIP);
+        let z = DISTANCE - w[2];
+        let focal = PT_PER_UNIT * DISTANCE;
+        [focal * w[0] / z, -focal * w[1] / z]
     }
 }
 
@@ -560,12 +724,20 @@ fn sparkle_colors(p: &Palette) -> [V3; 4] {
 }
 
 /// The model in `pose` with `stars` over it.
-fn render(pose: &Pose, mut stars: Vec<Star>, scale: f32, p: &Palette) -> (u32, Vec<u8>) {
-    let side = ((CANVAS * scale).round() as usize).max(1);
+/// `size` points square at `scale`, the wand `zoom` times its size in the slot.
+fn render(
+    pose: &Pose,
+    mut stars: Vec<Star>,
+    size: f32,
+    scale: f32,
+    zoom: f32,
+    p: &Palette,
+) -> (u32, Vec<u8>) {
+    let side = ((size * scale).round() as usize).max(1);
 
     // The model, supersampled.
     let ss = side * SUPERSAMPLE;
-    let focal = PT_PER_UNIT * DISTANCE * scale * SUPERSAMPLE as f32;
+    let focal = PT_PER_UNIT * DISTANCE * scale * zoom * SUPERSAMPLE as f32;
     let project = |w: V3, f: f32, side: usize| {
         let z = DISTANCE - w[2];
         [
@@ -696,12 +868,52 @@ mod tests {
     }
 
     #[test]
+    fn the_bar_grows_from_where_the_tip_is() {
+        let tip = Wand::rest_tip();
+        let kept = super::REST_TIP;
+        assert!(
+            (tip[0] - kept[0]).abs() < 0.5 && (tip[1] - kept[1]).abs() < 0.5,
+            "REST_TIP is {kept:?}, the model's tip is {tip:?}"
+        );
+        // And the wand is at rest as it casts the bar.
+        let mut wand = Wand::new();
+        run(&mut wand, 0.0, super::CAST as f64, "");
+        let t = wand.tip;
+        assert!(
+            (t[0] - tip[0]).abs() < 1.0 && (t[1] - tip[1]).abs() < 1.0,
+            "{t:?} vs {tip:?}"
+        );
+    }
+
+    #[test]
+    fn it_comes_in_large_then_flies_home() {
+        let mut wand = Wand::new();
+        run(&mut wand, 0.0, 0.2, "");
+        assert!(wand.flying());
+        assert_eq!((wand.center, wand.zoom), (super::HERO, super::HERO_ZOOM));
+        run(&mut wand, 0.2, 0.65, "");
+        assert!(
+            wand.flying() && wand.zoom < super::HERO_ZOOM && wand.zoom > 1.0,
+            "shrinking"
+        );
+        run(&mut wand, 0.65, 1.0, "");
+        assert!(!wand.flying());
+        assert_eq!(
+            (wand.center, wand.zoom),
+            (super::super::WAND_CENTER, 1.0),
+            "home"
+        );
+        run(&mut wand, 1.0, 1.3, "");
+        assert!(wand.opening().is_none(), "and its trail is gone");
+    }
+
+    #[test]
     fn frames_repeat_for_the_same_cues() {
         let (mut a, mut b) = (Wand::new(), Wand::new());
         for w in [&mut a, &mut b] {
-            run(w, 0.0, 0.4, "");
+            run(w, 0.0, 1.4, "");
             w.cue(Gesture::Poke);
-            run(w, 0.41, 0.8, "");
+            run(w, 1.41, 1.8, "");
         }
         let (side, rgba) = image(&a);
         assert_eq!(side, (CANVAS * 2.0) as u32);

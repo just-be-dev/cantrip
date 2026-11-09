@@ -94,8 +94,16 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         .padding(MARGIN)
         .child(panel(s, look));
     if let Some(intro) = look.intro {
-        // Thrown from the wand.
-        root = root.child(intro.burst(WAND_CENTER[0], WAND_CENTER[1], p));
+        // Thrown from the wand's tip as it casts the bar.
+        let tip = wand::hero_tip();
+        root = root.child(intro.burst(tip[0], tip[1], p));
+    }
+    // The wand flying in, over everything, until it's home in the search row.
+    if s.session.is_none()
+        && s.revealed
+        && let Some(hero) = s.wand.hero_view(look.scale, &p)
+    {
+        root = root.child(hero);
     }
     if s.session.is_none()
         && let Some(spells) = s.wand.spells_view(&s.field.text, &p)
@@ -180,7 +188,16 @@ fn panel(s: &Cantrip, look: Look) -> El {
     match (s.revealed, look.intro) {
         _ if s.closing => shell.sequence(Outro::new(s.outro).glass()),
         (false, _) => shell.sequence(Sequence::new(intro::CLOSED)),
-        (true, Some(intro)) => shell.sequence(intro.panel()),
+        (true, Some(intro)) => {
+            // It swells out of the wand's tip.
+            let tip = wand::hero_tip();
+            shell
+                .origin(
+                    (tip[0] - MARGIN) / PANEL_SIZE.0,
+                    (tip[1] - MARGIN) / PANEL_SIZE.1,
+                )
+                .sequence(intro.panel())
+        }
         (true, None) => shell,
     }
 }
@@ -286,7 +303,12 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
             .a11y_hidden()
             .on_press(|s: &mut Cantrip| s.wand.cue(wand::Gesture::Poke))
             .on_hover_change(|s: &mut Cantrip, inside, _| s.wand.hover(inside));
-        play(wand, look.intro.map(Intro::orb)).child(s.wand.view(LEADING, look.scale))
+        // Flying in, it draws over the window (`hero_view`) until it lands here.
+        if s.wand.flying() {
+            wand
+        } else {
+            wand.child(s.wand.view(LEADING, look.scale))
+        }
     };
     // The wand writes the query: characters are hidden until its spark lands, then glow.
     let spans = if s.session.is_none() {
