@@ -1,0 +1,4 @@
+# Rune's pinned toolchain (rust-toolchain.toml in github.com/anomalyco/rune). Bump with the rune rev.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

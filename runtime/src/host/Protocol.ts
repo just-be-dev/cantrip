@@ -1,9 +1,9 @@
 /**
- * The wire protocol between Cantrip.app (Swift) and this host: one JSON object
+ * The wire protocol between Cantrip.app (Rust) and this host: one JSON object
  * per line. The app writes to our stdin, and we write to stdout. Logs go to
  * stderr.
  *
- * Keep in sync with app/Sources/Cantrip/Protocol.swift.
+ * Keep in sync with app/src/protocol.rs.
  */
 import * as Schema from "effect/Schema"
 
@@ -91,7 +91,7 @@ export type WireTone = "normal" | "warning" | "critical"
 export type WireBarIcon =
   /** An `Icon` string: SF Symbol, emoji, or file path. */
   | { readonly kind: "image"; readonly value: string }
-  /** `value` is 0–1, or null for "no data" (dashed). Swift animates between values. */
+  /** `value` is 0–1, or null for "no data" (dashed). The app animates between values. */
   | {
     readonly kind: "ring"
     readonly value: number | null

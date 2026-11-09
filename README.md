@@ -1,11 +1,12 @@
 # Cantrip 🔮
 
-A command bar for macOS: press **⌥ Space**, type, hit ↵. The UI is native
-Swift (AppKit + SwiftUI). The commands, called **spells**, are
+A command bar for macOS: press **⌥ Space**, type, hit ↵. The UI is Rust, drawn
+with [Rune](https://github.com/anomalyco/rune) (GPU-rendered, with native AppKit
+menus and status items). The commands, called **spells**, are
 [Effect](https://effect.website) programs that run on [Bun](https://bun.sh).
 
 ```text
-┌────────────── Cantrip.app (Swift) ─────────────┐        ┌──── bun host ─────┐
+┌───────────── Cantrip.app (Rust · Rune) ────────┐        ┌──── bun host ─────┐
 │ hotkey · panel · fuzzy search · apps · views   │ stdio  │ loads spells      │
 │ draws List / Detail natively, copy/open/HUD    │◀──────▶│ runs Effect fibers│
 └────────────────────────────────────────────────┘  JSON  └───────────────────┘
@@ -77,7 +78,7 @@ export const uuid = Spell.make({
   })
 })
 
-// A list that Swift filters as you type.
+// A list that the bar filters as you type.
 export const fruit = Spell.make({
   title: "Fruit",
   run: Ui.list({
@@ -111,7 +112,7 @@ export const search = Spell.make({
   something has been pushed on top of it. `Ui.query` is a `Stream` of that
   view's search text.
 - **Views are data.** `View.list` and `View.detail` describe what to show, and
-  Swift draws it. `Action.copy` and `Action.open` run in Swift with no round
+  the app draws it. `Action.copy` and `Action.open` run in the app with no round
   trip. `Action.run(effect)` and `Action.push(program)` call back into your spell.
 - **Pushed views are programs.** `Action.push("Open", someEffect)` runs
   `someEffect` with a `Ui` bound to the new view, so it can loop, poll, or
@@ -182,7 +183,7 @@ export const battery = Daemon.summon({
   restart, when the daemon is back a moment later: hand state over instead of
   tearing it down. Insomnia keeps a running session through those and only
   restores sleep on a real stop.
-- **The item.** `MenuBar.render` shows or updates it, and Swift draws it
+- **The item.** `MenuBar.render` shows or updates it, and the app draws it
   natively. The icon is an `Icon` string or `MenuBar.ring(value, { tone, busy,
   pulse, badge })`, a ring that animates between values. `title` is short text
   next to the icon.
@@ -279,7 +280,7 @@ Environment variables, for development:
 ## Layout
 
 ```text
-app/        Swift package: panel, hotkey, host bridge, views (Sources/Cantrip)
+app/        Rust crate on Rune: panel, hotkey, host bridge, views, menu bar (src/)
 runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
 grimoire/   example spells and daemons, copied to ~/.config/cantrip/grimoire on first run
 scripts/    bundle.sh builds Cantrip.app
@@ -288,7 +289,7 @@ alchemy.run.ts  an empty stack, so projects.just-be.dev deploys succeed (nothing
 
 The wire protocol is documented in
 [`runtime/src/host/Protocol.ts`](runtime/src/host/Protocol.ts) and mirrored in
-[`app/Sources/Cantrip/Protocol.swift`](app/Sources/Cantrip/Protocol.swift). You
+[`app/src/protocol.rs`](app/src/protocol.rs). You
 can drive the host by hand with `mise run host`:
 
 ```sh

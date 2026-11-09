@@ -1,6 +1,6 @@
 /**
  * A daemon's menu bar item: an icon (and optional title) in the macOS menu
- * bar with a menu under it. Swift draws it; the daemon describes it.
+ * bar with a menu under it. The app draws it; the daemon describes it.
  *
  * ```ts
  * yield* MenuBar.render({
@@ -25,7 +25,7 @@ import type { Icon } from "./View.ts"
 export type Tone = "normal" | "warning" | "critical"
 
 /**
- * A ring that fills clockwise from 12 o'clock. Swift animates between values,
+ * A ring that fills clockwise from 12 o'clock. The app animates between values,
  * so render as often as you like.
  */
 export interface Ring {
@@ -60,9 +60,9 @@ export interface Item {
   readonly key?: string | undefined
   /** Runs in the daemon when the item is chosen, from the menu or from the bar's search. */
   readonly onSelect?: Effect.Effect<unknown, unknown, DaemonServices> | undefined
-  /** Copy this text when chosen. Swift handles it directly. */
+  /** Copy this text when chosen. The app handles it directly. */
   readonly copy?: string | undefined
-  /** Open this URL or path when chosen. Swift handles it directly. */
+  /** Open this URL or path when chosen. The app handles it directly. */
   readonly open?: string | undefined
   readonly submenu?: ReadonlyArray<Entry> | undefined
 }

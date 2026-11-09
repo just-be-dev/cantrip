@@ -1,4 +1,4 @@
-// A static list with every kind of action. Swift filters the list as you type.
+// A static list with every kind of action. The bar filters the list as you type.
 import * as Effect from "effect/Effect"
 import { Action, Spell, Ui, View } from "cantrip"
 

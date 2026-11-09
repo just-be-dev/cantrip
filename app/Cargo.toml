@@ -1,0 +1,29 @@
+[package]
+name = "cantrip"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Cantrip.app: the command bar, drawn with Rune"
+
+[[bin]]
+name = "Cantrip"
+path = "src/main.rs"
+
+[dependencies]
+# Rune is pre-release: pin a rev of `dev` (it is never rewritten). Bump both together.
+rune = { git = "https://github.com/anomalyco/rune", rev = "07c369b13e8bd82c3f0a74164bd132965de88830" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "07c369b13e8bd82c3f0a74164bd132965de88830", features = ["markdown"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSAttributedString", "NSBundle", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL", "NSUserDefaults", "NSValue", "NSDate", "NSRunLoop", "NSTimer", "NSProcessInfo", "NSKeyValueCoding", "NSEnumerator", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSAttributedString", "NSAppearance", "NSBezierPath", "NSBitmapImageRep", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSProgressIndicator", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSText", "NSTextField", "NSView", "NSWorkspace", "NSApplication", "NSAccessibilityProtocols", "NSStringDrawing", "NSFontDescriptor", "block2", "objc2-quartz-core"] }
+objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAAnimation", "CAMediaTimingFunction", "CAMediaTiming"] }
+objc2-service-management = { version = "0.3", features = ["SMAppService"] }
+
+[profile.release]
+debug = "line-tables-only"

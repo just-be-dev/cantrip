@@ -1,5 +1,5 @@
 /**
- * Declarative views a spell can show. Swift draws these natively; actions
+ * Declarative views a spell can show. The app draws these natively (Rune); actions
  * that need code (`Action.run`, `Action.push`) call back into the spell.
  */
 import type * as Effect from "effect/Effect"
@@ -57,7 +57,7 @@ export interface List {
   readonly items: ReadonlyArray<ListItem>
   readonly placeholder?: string | undefined
   /**
-   * `true` (default): Swift fuzzy-filters `items` as the user types.
+   * `true` (default): the bar fuzzy-filters `items` as the user types.
    * `false`: the spell owns filtering and reads `Ui.query` itself.
    */
   readonly filtering?: boolean | undefined

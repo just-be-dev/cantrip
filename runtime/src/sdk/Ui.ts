@@ -56,7 +56,7 @@ export const copy = (text: string) => Ui.use((ui) => ui.copy(text))
 export const open = (target: string) => Ui.use((ui) => ui.open(target))
 export const query = Stream.unwrap(Ui.useSync((ui) => ui.query))
 
-/** Render a static list. Swift filters it as the user types. */
+/** Render a static list. The bar filters it as the user types. */
 export const list = (options: Omit<View.List, "_tag">) => render(View.list(options))
 
 /** Render a markdown detail view. */

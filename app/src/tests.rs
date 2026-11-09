@@ -1,0 +1,315 @@
+//! The bar driven headlessly through Rune's `Runtime`: keys and clicks in, host messages and
+//! effects out (`Services::log` records what a live app would send or do).
+
+use rune::{Env, Key, KeyEvent, Mods, Runtime};
+
+use crate::fixtures;
+use crate::protocol::*;
+use crate::services::Services;
+use crate::store::Cantrip;
+use crate::views;
+
+fn runtime(scene: fn(&mut Cantrip)) -> Runtime<Cantrip> {
+    let mut state = Cantrip::new(Services::default());
+    scene(&mut state);
+    let mut rt = Runtime::new(
+        state,
+        views::view,
+        views::PANEL_SIZE,
+        Env {
+            system_dark: true,
+            scale: 2.0,
+        },
+    );
+    rt.frame(0.0);
+    rt
+}
+
+fn settle(rt: &mut Runtime<Cantrip>) {
+    for _ in 0..3 {
+        rt.frame(1.0 / 60.0);
+    }
+}
+
+fn press(rt: &mut Runtime<Cantrip>, key: Key) {
+    rt.key(key.into());
+    settle(rt);
+}
+
+fn press_with(rt: &mut Runtime<Cantrip>, key: Key, mods: Mods) {
+    rt.key(KeyEvent { key, mods });
+    settle(rt);
+}
+
+fn type_text(rt: &mut Runtime<Cantrip>, text: &str) {
+    for c in text.chars() {
+        rt.key(Key::Text(c.to_string()).into());
+    }
+    settle(rt);
+}
+
+fn click(rt: &mut Runtime<Cantrip>, key: &str) {
+    let (x, y) = rt.find(key).unwrap_or_else(|| panic!("no element {key}"));
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    settle(rt);
+}
+
+fn titles(rt: &Runtime<Cantrip>) -> Vec<String> {
+    rt.state.rows().iter().map(|r| r.title.clone()).collect()
+}
+
+fn log(rt: &mut Runtime<Cantrip>) -> Vec<String> {
+    std::mem::take(&mut rt.state.services.log)
+}
+
+fn render(rt: &mut Runtime<Cantrip>, depth: usize, view: WireView) {
+    let message = HostMessage::Render {
+        session: "s1".into(),
+        depth,
+        view,
+    };
+    // A host message lands as an update does: through a handler with a Tx.
+    rt.state.services.log.clear();
+    rt.update(move |s, tx| s.receive(message, tx));
+    settle(rt);
+}
+
+#[test]
+fn typing_filters_the_root_search_and_arrows_move_the_selection() {
+    let mut rt = runtime(fixtures::root);
+    assert!(
+        rt.state.field.focused,
+        "the field has the keyboard from the start"
+    );
+    type_text(&mut rt, "cal");
+    assert_eq!(rt.state.query(), "cal");
+    assert_eq!(&titles(&rt)[..2], ["Calendar", "Calculator"]);
+    press(&mut rt, Key::Down);
+    assert_eq!(rt.state.selection(), 1);
+    press_with(
+        &mut rt,
+        Key::Text("p".into()),
+        Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    );
+    assert_eq!(rt.state.selection(), 0, "⌃P moves up");
+    press(&mut rt, Key::Up);
+    assert_eq!(rt.state.selection(), 0, "the top stays the top");
+    assert!(rt.find("row-1").is_some());
+}
+
+#[test]
+fn enter_casts_a_spell_and_escape_walks_back_out() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "hello");
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert_eq!(
+        log(&mut rt),
+        [r#"{"type":"run","session":"s1","command":"hello.ts:hello"}"#]
+    );
+    assert!(rt.state.session.is_some());
+    assert_eq!(
+        rt.state.field.text, "",
+        "a new view starts with an empty field"
+    );
+    assert_eq!(rt.state.usage.get("spell:hello.ts:hello"), Some(&4));
+
+    render(&mut rt, 0, fixtures::hello_list());
+    assert_eq!(rt.state.placeholder(), "Filter greetings…");
+    type_text(&mut rt, "bon");
+    assert_eq!(titles(&rt), ["Bonjour"], "a filtering list filters here");
+    assert!(log(&mut rt).is_empty(), "and doesn't ask the host");
+
+    press(&mut rt, Key::Escape);
+    assert_eq!(log(&mut rt), [r#"{"type":"close","session":"s1"}"#]);
+    assert!(rt.state.session.is_none());
+    assert_eq!(rt.state.field.text, "hello", "the root's query comes back");
+    press(&mut rt, Key::Escape);
+    assert_eq!(rt.state.query(), "", "escape clears the search");
+    press(&mut rt, Key::Escape);
+    assert_eq!(log(&mut rt), ["hide-panel"], "then hides the bar");
+}
+
+#[test]
+fn the_selection_glides_from_row_to_row() {
+    let mut rt = runtime(fixtures::root);
+    let y = |rt: &Runtime<Cantrip>| rt.presented("selection").unwrap().0[1];
+    let row_y = |rt: &Runtime<Cantrip>, i: usize| rt.presented(&crate::store::row_key(i)).unwrap().0[1];
+    let start = y(&rt);
+    assert!((start - row_y(&rt, 0)).abs() < 0.5, "it starts under the first row");
+    rt.key(Key::Down.into());
+    rt.key(Key::Down.into());
+    for _ in 0..6 {
+        rt.frame(1.0 / 60.0);
+    }
+    let mid = y(&rt);
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    let end = y(&rt);
+    assert!(start < mid && mid < end, "it travels: {start} → {mid} → {end}");
+    assert!((end - row_y(&rt, 2)).abs() < 0.5, "and lands under the third row");
+}
+
+#[test]
+fn a_list_that_filters_in_the_spell_gets_each_query() {
+    let mut rt = runtime(fixtures::list);
+    let WireView::List {
+        items,
+        placeholder,
+        empty_text,
+        ..
+    } = fixtures::hello_list()
+    else {
+        unreachable!()
+    };
+    render(
+        &mut rt,
+        0,
+        WireView::List {
+            placeholder,
+            filtering: false,
+            empty_text,
+            items,
+        },
+    );
+    type_text(&mut rt, "ab");
+    let sent = log(&mut rt);
+    assert_eq!(
+        sent.last().map(String::as_str),
+        Some(r#"{"type":"query","session":"s1","depth":0,"text":"ab"}"#)
+    );
+    assert_eq!(titles(&rt).len(), 4, "the host decides what matches");
+}
+
+#[test]
+fn push_actions_wait_for_the_next_view_and_escape_pops_it() {
+    let mut rt = runtime(fixtures::list);
+    press(&mut rt, Key::Command('k'));
+    assert!(rt.state.actions_open);
+    assert!(rt.find("actions").is_some());
+    press(&mut rt, Key::Down);
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert_eq!(
+        log(&mut rt),
+        [r#"{"type":"action","session":"s1","depth":0,"action":"details"}"#]
+    );
+    assert!(!rt.state.actions_open);
+    assert!(
+        rt.state.session.as_ref().unwrap().loading(),
+        "loading while the push is on its way"
+    );
+
+    render(
+        &mut rt,
+        1,
+        WireView::Detail {
+            markdown: "# Bonjour".into(),
+            metadata: Vec::new(),
+            actions: Vec::new(),
+        },
+    );
+    assert_eq!(rt.state.session.as_ref().unwrap().frames.len(), 2);
+    assert!(rt.find("detail").is_some());
+    press(&mut rt, Key::Escape);
+    assert_eq!(log(&mut rt), [r#"{"type":"pop","session":"s1","depth":1}"#]);
+    assert_eq!(rt.state.session.as_ref().unwrap().frames.len(), 1);
+}
+
+#[test]
+fn command_enter_runs_the_second_action_and_copy_hides_with_a_hud() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "calendar");
+    log(&mut rt);
+    press_with(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    );
+    assert_eq!(
+        log(&mut rt),
+        ["reveal /System/Applications/Calendar.app", "hide-panel"]
+    );
+
+    let mut rt = runtime(fixtures::list);
+    press(&mut rt, Key::Enter);
+    assert_eq!(log(&mut rt), ["hide-panel", "hud Copied to clipboard"]);
+}
+
+#[test]
+fn clicking_a_row_performs_it_and_the_field_keeps_the_keyboard() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "cal");
+    log(&mut rt);
+    click(&mut rt, "row-1");
+    assert_eq!(
+        log(&mut rt),
+        ["open /System/Applications/Calculator.app", "hide-panel"]
+    );
+    type_text(&mut rt, "x");
+    assert_eq!(rt.state.query(), "calx");
+}
+
+#[test]
+fn daemon_menu_items_are_searchable() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "keep awake");
+    assert_eq!(titles(&rt)[0], "Keep Awake");
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert_eq!(
+        log(&mut rt),
+        [
+            r#"{"type":"menu","daemon":"insomnia","item":"stay-awake"}"#,
+            "hide-panel"
+        ]
+    );
+}
+
+#[test]
+fn reload_reports_back_when_the_spells_arrive() {
+    let mut rt = runtime(fixtures::root);
+    press(&mut rt, Key::Command('r'));
+    assert_eq!(log(&mut rt), [r#"{"type":"reload"}"#]);
+    assert_eq!(
+        rt.state.toast.as_ref().map(|t| t.title.as_str()),
+        Some("Reloading grimoire…")
+    );
+    let message = HostMessage::Commands {
+        commands: fixtures::commands(),
+        errors: Vec::new(),
+    };
+    rt.update(move |s, tx| s.receive(message, tx));
+    settle(&mut rt);
+    assert_eq!(
+        rt.state.toast.as_ref().map(|t| t.title.as_str()),
+        Some("4 spells loaded")
+    );
+    assert!(rt.find("toast").is_some());
+}
+
+#[test]
+fn new_spells_show_up_in_the_search_as_they_load() {
+    let mut rt = runtime(|_| {});
+    type_text(&mut rt, "hel");
+    assert!(!titles(&rt).contains(&"Hello".to_string()));
+    let message = HostMessage::Commands {
+        commands: fixtures::commands(),
+        errors: vec!["broken.ts: nope".into()],
+    };
+    rt.update(move |s, tx| s.receive(message, tx));
+    settle(&mut rt);
+    assert_eq!(titles(&rt)[0], "Hello");
+    assert_eq!(
+        rt.state.toast.as_ref().map(|t| t.title.as_str()),
+        Some("1 spell(s) failed to load")
+    );
+}

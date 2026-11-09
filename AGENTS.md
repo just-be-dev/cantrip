@@ -1,10 +1,10 @@
 # Cantrip
 
-macOS command bar. Swift app (`app/`) + bun spell host (`runtime/`) talking JSON lines over stdio.
+macOS command bar. Rust app drawn with [Rune](https://github.com/anomalyco/rune) (`app/`) + bun spell host (`runtime/`) talking JSON lines over stdio.
 
 ## Rules
 
-- The protocol lives in two places: `runtime/src/host/Protocol.ts` and `app/Sources/Cantrip/Protocol.swift`. Change both together.
+- The protocol lives in two places: `runtime/src/host/Protocol.ts` and `app/src/protocol.rs`. Change both together.
 - The host's stdout is the protocol. Never write to it except through `Wire.send`; `console.*` is redirected to stderr (the host log).
 - Every view in a session is a frame with its own Scope, query, and action handlers. A `Ui` is bound to one frame (depth). Keep it that way — `render` must never target "whatever is on top".
 - Daemons (`runtime/src/host/Daemons.ts`) are host-owned, not session-owned: one Scope each, forked from the host's. Every way the host ends (stdin EOF, SIGTERM) must close that scope so finalizers run. Insomnia's finalizer is what turns sleep back on. Never `process.exit` before the layer scope has closed.
@@ -13,6 +13,10 @@ macOS command bar. Swift app (`app/`) + bun spell host (`runtime/`) talking JSON
 - CLI commands (`runtime/src/host/Commands.ts`, `runtime/src/cli/client.ts`) run in the host, never in a separate process, so a daemon's command shares its live state. The socket frame format is documented at the top of Commands.ts; change the client with it. Link management must only ever touch symlinks that point at Cantrip's shim.
 - Spells import `cantrip` and `effect/*`; the host symlinks both into the grimoire's `node_modules`. Don't make spells install packages.
 - `Bun.resolveSync` before dynamic `import()` in the Registry works around a Bun 1.3.14 resolver bug with newly created files. Keep it.
+
+- The app (`app/`) is a Rune app. Rune draws the panel and the HUD; `app/src/platform/` is the AppKit Rune doesn't do (status items and their menus, SF Symbols rasterized to pixels, NSWorkspace, user defaults, the login item). State lives in `store.rs`; it reaches the outside only through `services.rs`, which headless runs and tests leave empty so effects land in `Services::log`.
+- Check UI work headlessly: add or adjust a scene in `app/src/fixtures.rs`, render it with `target/release/Cantrip --scene NAME --snap out.png` (or `--tree`, `--script`), and cover behaviour in `app/src/tests.rs`. Headless runs never start the host, the menu bar or NSWorkspace; `app/scripts/search.json` is a sample `--script`.
+- Rune is pinned to a `dev` rev in `app/Cargo.toml` (both `rune` and `rune-kit`), with its toolchain in `app/rust-toolchain.toml` and `rust` in `mise.toml`. Bump them together. Rune colours are linear; use `views::palette::srgb` for sRGB values.
 
 - bun is pinned to 1.4.4 in `mise.toml`, `engines.bun` in `runtime/package.json`, and `MinimumBun` in `runtime/src/host/main.ts`. Bump all three together. Use `mise exec -- bun …` if your PATH has an older bun.
 
@@ -28,7 +32,8 @@ access a service in a pipe with `Service.use(...)`. Check `runtime/node_modules/
 
 ```sh
 mise run typecheck                 # runtime + example spells (tsgo, Effect language service)
-cd app && swift build              # must stay warning-free
+mise run check                     # app: clippy -D warnings + tests (Rune Runtime drives keys/clicks headlessly)
+mise run snap                      # app: render every headless scene to app/target/snaps/*.png
 mise run host                      # drive the host by hand with JSON on stdin
 CANTRIP_KEEP_OPEN=1 mise run dev    # run the app without hide-on-blur
 ```

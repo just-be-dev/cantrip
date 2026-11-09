@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Cantrip.app: the Swift binary, the bun runtime, and the example spells.
+# Build Cantrip.app: the Rust (Rune) binary, the bun runtime, and the example spells.
 #
 #   scripts/bundle.sh            → build/Cantrip.app
 #   scripts/bundle.sh --install  → also copy to ~/Applications and launch it
@@ -9,9 +9,9 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/build"
 app="$out/Cantrip.app"
 
-echo "→ swift build (release)"
-(cd "$root/app" && swift build -c release --arch arm64 >/dev/null)
-bin="$(cd "$root/app" && swift build -c release --arch arm64 --show-bin-path)/Cantrip"
+echo "→ cargo build (release)"
+(cd "$root/app" && cargo build --release --quiet)
+bin="$root/app/target/release/Cantrip"
 
 echo "→ assembling $app"
 rm -rf "$app"

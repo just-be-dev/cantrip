@@ -20,7 +20,7 @@ export const run = (
   options?: Options
 ): Action => ({ _tag: "Run", title, effect, icon: options?.icon })
 
-/** Copy text to the clipboard, hide the bar, and show a HUD. Swift handles it directly. */
+/** Copy text to the clipboard, hide the bar, and show a HUD. The app handles it directly. */
 export const copy = (title: string, text: string, options?: Options): Action => ({
   _tag: "Copy",
   title,
@@ -28,7 +28,7 @@ export const copy = (title: string, text: string, options?: Options): Action => 
   icon: options?.icon ?? "doc.on.doc"
 })
 
-/** Open a URL, file, or app with the default handler. Swift handles it directly. */
+/** Open a URL, file, or app with the default handler. The app handles it directly. */
 export const open = (title: string, target: string, options?: Options): Action => ({
   _tag: "Open",
   title,
