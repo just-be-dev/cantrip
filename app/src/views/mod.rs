@@ -2,11 +2,13 @@
 //! results or a spell's view, footer, and ⌘K actions.
 
 pub mod hud;
+pub mod intro;
 pub mod palette;
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use rune::{
+    Sequence,
     Color, Cx, Cycle, El, ScrollSpec, Shadow, Spring, SystemMaterial, TextStyle, Transition, Tx,
     Vec2, col, el, row, spacer, text, text_input,
 };
@@ -15,6 +17,7 @@ use rune_kit::markdown::{Markdown, MarkdownStyle};
 use crate::icons::{self, Icon};
 use crate::protocol::{ToastStyle, WireMetadata, WireView};
 use crate::store::{Cantrip, Row, row_key};
+use intro::Intro;
 use palette::Palette;
 
 pub const PANEL_SIZE: (f32, f32) = (760.0, 480.0);
@@ -32,6 +35,8 @@ const GLIDE: Spring = Spring::new(0.34, 0.16);
 struct Look {
     p: Palette,
     scale: f32,
+    /// The entrance to play, after an opening.
+    intro: Option<Intro>,
 }
 
 fn font(size: f32, weight: f32) -> TextStyle {
@@ -49,6 +54,7 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
     let look = Look {
         p: palette::arcane(),
         scale: cx.env().scale,
+        intro: Intro::new(s.intro).filter(|_| s.revealed),
     };
     let p = look.p;
     let loading = s.session.as_ref().is_some_and(|s| s.loading());
@@ -74,22 +80,42 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         })
         // The search field keeps the keyboard whatever is clicked (rows, actions, back).
         .preserve_focus_on_press(true)
-        .child(aurora(p))
+        .child(aurora(look))
         .child(search_bar(s, look))
         .child(loading_bar(loading, look))
-        .child(glow_rule())
+        .child(glow_rule(look))
         .child(content(s, look))
-        .child(footer(s, look));
+        .child(play(footer(s, look), look.intro.map(Intro::footer)));
     if s.actions_open {
         panel = panel.child(action_panel(s, look));
     }
-    panel
+    if let Some(intro) = look.intro {
+        // Thrown from the wand's orb: 16 pt in, centred in the 64 pt search row.
+        panel = panel.child(intro.burst(16.0 + 17.0, 32.0, p));
+        panel = panel.child(intro.stars(PANEL_SIZE.0, p));
+    }
+    match (s.revealed, look.intro) {
+        (false, _) => panel.sequence(Sequence::new(intro::CLOSED)),
+        (true, Some(intro)) => panel.sequence(intro.panel()),
+        (true, None) => panel,
+    }
+}
+
+/// `el` with its part of the entrance, if one is playing.
+pub(crate) fn play(el: El, sequence: Option<Sequence>) -> El {
+    match sequence {
+        Some(sequence) => el.sequence(sequence),
+        None => el,
+    }
 }
 
 /// Light behind the glass: violet and magenta pooled at the top, a cool wash at the bottom.
-fn aurora(p: Palette) -> El {
-    let pool = |center: [f32; 2], radius: [f32; 2], color: Color, strength: f32| {
-        el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+fn aurora(look: Look) -> El {
+    let p = look.p;
+    let pool = |i: usize, center: [f32; 2], radius: [f32; 2], color: Color, strength: f32| {
+        // Each pool blooms out from its own centre.
+        let pool = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).origin(center[0], center[1]);
+        play(pool, look.intro.map(|intro| intro.bloom(i)))
             .a11y_hidden()
             .radial_gradient(
                 center,
@@ -106,14 +132,16 @@ fn aurora(p: Palette) -> El {
         .a11y_hidden()
         // Ink over the blur, so what's behind reads as light, not as text.
         .fill(p.bg.alpha(0.84))
-        .child(pool([0.12, -0.05], [460.0, 210.0], p.violet, 0.34))
-        .child(pool([0.78, -0.10], [420.0, 170.0], p.magenta, 0.20))
-        .child(pool([0.55, 1.08], [520.0, 160.0], p.cyan, 0.09))
+        .child(pool(0, [0.12, -0.05], [460.0, 210.0], p.violet, 0.34))
+        .child(pool(1, [0.78, -0.10], [420.0, 170.0], p.magenta, 0.20))
+        .child(pool(2, [0.55, 1.08], [520.0, 160.0], p.cyan, 0.09))
 }
 
 /// A hairline that glows in the middle.
-fn glow_rule() -> El {
-    el().key("rule")
+fn glow_rule(look: Look) -> El {
+    // It draws itself across from the leading edge.
+    let rule = el().key("rule").origin(0.0, 0.5);
+    play(rule, look.intro.map(Intro::rule))
         .h(1.0)
         .w_full()
         .linear_gradient(FRAC_PI_2, palette::arcane().rule())
@@ -163,7 +191,7 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
                 look.scale,
             ))
     } else {
-        orb(34.0, look).key("wand").child(icons::view(
+        play(orb(34.0, look).key("wand"), look.intro.map(Intro::orb)).child(icons::view(
             &Icon::Symbol("wand.and.sparkles".into()),
             18.0,
             p.text,
@@ -290,7 +318,8 @@ fn results(s: &Cantrip, look: Look) -> El {
         );
     }
     for (i, r) in rows.iter().enumerate() {
-        list = list.child(row_view(r, i, i == selection, look));
+        let rise = look.intro.filter(|_| s.intro_rows && i < intro::STAGGERED_ROWS).map(|intro| intro.row(i));
+        list = list.child(play(row_view(r, i, i == selection, look), rise));
     }
     // The selection is one element that glides from row to row, under them and outside the
     // list's instant changes, so filtering snaps while moving the selection springs.
@@ -339,7 +368,7 @@ fn results(s: &Cantrip, look: Look) -> El {
             col()
                 .w_full()
                 .padding(LIST_PAD)
-                .child(highlight)
+                .child(play(highlight, look.intro.filter(|_| s.intro_rows).map(|intro| intro.row(selection.min(intro::STAGGERED_ROWS)))))
                 .child(list),
         )
 }

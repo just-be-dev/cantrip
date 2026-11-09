@@ -156,6 +156,40 @@ fn the_selection_glides_from_row_to_row() {
 }
 
 #[test]
+fn opening_plays_the_intro_from_a_closed_pose() {
+    let mut rt = runtime(fixtures::root);
+    let opacity = |rt: &Runtime<Cantrip>| rt.presented("panel").map_or(0.0, |p| p.1);
+    assert!((opacity(&rt) - 1.0).abs() < 0.01, "a fresh launch shows at rest");
+    rt.update(|s, _| s.hide_panel());
+    settle(&mut rt);
+    assert!(opacity(&rt) < 0.01, "hidden, it holds its closed pose");
+    rt.update(|s, _| s.show_panel());
+    settle(&mut rt);
+    assert!(opacity(&rt) < 0.01, "and waits for the keyboard");
+    rt.update(|s, _| s.focus_changed(true));
+    assert_eq!(rt.state.intro, 1);
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    let rising = opacity(&rt);
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rising > 0.05 && rising < 0.95, "it fades in: {rising}");
+    assert!((opacity(&rt) - 1.0).abs() < 0.01, "and lands open");
+    assert!(rt.find("burst-1").is_some() && rt.find("stars-1").is_some());
+
+    // The next opening replays it.
+    rt.update(|s, _| s.hide_panel());
+    rt.update(|s, _| s.show_panel());
+    rt.update(|s, _| s.focus_changed(true));
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(opacity(&rt) < 0.95, "a second opening plays again: {}", opacity(&rt));
+}
+
+#[test]
 fn a_list_that_filters_in_the_spell_gets_each_query() {
     let mut rt = runtime(fixtures::list);
     let WireView::List {

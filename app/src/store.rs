@@ -197,6 +197,15 @@ pub struct Cantrip {
     pub services: Services,
     /// When installed apps were last scanned.
     pub last_scan: Option<Instant>,
+    /// Whether the bar shows its open pose. Hiding drops it, so the panel waits invisible until
+    /// it's on screen with the keyboard, and the intro then plays from the start.
+    pub revealed: bool,
+    /// Counts openings; each one replays the intro. 0 means it has never played (launch,
+    /// headless scenes, tests), so nothing animates in.
+    pub intro: u64,
+    /// The rows rise in after an opening, until the first keystroke.
+    pub intro_rows: bool,
+    shown_at: Option<Instant>,
 
     root_query: String,
     root_selection: usize,
@@ -226,6 +235,10 @@ impl Cantrip {
             usage,
             services,
             last_scan: None,
+            revealed: true,
+            intro: 0,
+            intro_rows: false,
+            shown_at: None,
             root_query: String::new(),
             root_selection: 0,
             next_session: 0,
@@ -252,6 +265,7 @@ impl Cantrip {
         if text == self.query() {
             return;
         }
+        self.intro_rows = false;
         self.actions_open = false;
         if let Some(session) = &mut self.session {
             let depth = session.frames.len() - 1;
@@ -731,6 +745,7 @@ impl Cantrip {
         }
         self.visible = false;
         self.focused = false;
+        self.revealed = false;
         self.hidden_at = Some(Instant::now());
         self.services.hide_panel();
     }
@@ -739,10 +754,32 @@ impl Cantrip {
         if self.hidden_at.is_some_and(|at| at.elapsed() > FRESH_AFTER) {
             self.reset();
         }
+        if !(self.visible && self.revealed) {
+            self.revealed = false;
+            self.shown_at = Some(Instant::now());
+        }
         self.visible = true;
         self.sync_field();
         self.opening();
         self.services.show_panel();
+    }
+
+    /// The panel gained or lost the keyboard.
+    pub fn focus_changed(&mut self, focused: bool) {
+        self.focused = focused;
+        if focused && self.visible && !self.revealed {
+            self.reveal();
+        } else if !focused && self.visible && !self.services.keep_open {
+            self.hide_panel();
+        }
+    }
+
+    /// Play the intro.
+    pub fn reveal(&mut self) {
+        self.revealed = true;
+        self.intro += 1;
+        self.intro_rows = true;
+        self.shown_at = None;
     }
 
     /// The hotkey: show the bar, or hide it if it's up and has the keyboard.
@@ -756,6 +793,11 @@ impl Cantrip {
 
     /// Timers: toasts and the HUD go away by themselves. True when something visible changed.
     pub fn tick(&mut self, now: Instant) -> bool {
+        // Shown but the keyboard never arrived (another app kept it): play the intro anyway.
+        if self.visible && !self.revealed && self.shown_at.is_some_and(|at| now.duration_since(at) > Duration::from_millis(250)) {
+            self.reveal();
+            return true;
+        }
         if self.toast.as_ref().is_some_and(|t| t.until <= now) {
             self.toast = None;
             return true;

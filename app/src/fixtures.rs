@@ -11,6 +11,7 @@ pub type Scene = (&'static str, fn(&mut Cantrip));
 
 pub const SCENES: &[Scene] = &[
     ("root", root),
+    ("opening", opening),
     ("query", query),
     ("empty", empty),
     ("actions", actions),
@@ -128,6 +129,12 @@ pub fn root(s: &mut Cantrip) {
     s.usage.insert("spell:hello.ts:hello".into(), 3);
     s.visible = true;
     s.changed();
+}
+
+/// Shown and waiting for the keyboard: `scripts/open.json` focuses it and the intro plays.
+fn opening(s: &mut Cantrip) {
+    root(s);
+    s.revealed = false;
 }
 
 fn query(s: &mut Cantrip) {

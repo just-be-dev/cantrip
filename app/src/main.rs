@@ -66,12 +66,7 @@ fn main() {
         .configured_options(
             WindowOptions::launcher_panel().macos(|native| native.corner_radius(views::RADIUS)),
         )
-        .on_focus(|s, focused, _| {
-            s.focused = focused;
-            if !focused && s.visible && !s.services.keep_open {
-                s.hide_panel();
-            }
-        })
+        .on_focus(|s, focused, _| s.focus_changed(focused))
         .on_quit(|s, _| {
             if let Some(host) = &mut s.services.host {
                 host.stop();
@@ -106,7 +101,11 @@ fn main() {
         };
         Cantrip::new(services)
     })
-    .global_shortcut(&config.hotkey, |s, _| s.toggle_panel())
+    .global_shortcut(&config.hotkey, |s, tx| {
+        s.toggle_panel();
+        // The intro starts when the panel has the keyboard; this wakes the fallback in `tick`.
+        tx.wake_after(Duration::from_millis(300));
+    })
     .on_ready(move |_| {
         if started.replace(true) {
             return;

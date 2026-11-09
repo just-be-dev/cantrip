@@ -95,7 +95,10 @@ impl Services {
             return self.log.push(format!("hud {message}"));
         };
         let message = message.to_string();
-        hud.update(move |h, _| h.message = message);
+        hud.update(move |h, _| {
+            h.message = message;
+            h.shown += 1;
+        });
         hud.set_display(DisplayTarget::UnderPointer);
         hud.fade_in(Duration::from_millis(120));
         let generation = self.hud_generation.fetch_add(1, Ordering::SeqCst) + 1;
