@@ -186,7 +186,7 @@ fn opening_plays_the_intro_from_a_closed_pose() {
         rt.frame(1.0 / 60.0);
     }
     assert!(opacity(&rt) < 0.01, "the bar waits for the wand to cast it");
-    for _ in 0..16 {
+    for _ in 0..6 {
         rt.frame(1.0 / 60.0);
     }
     let rising = opacity(&rt);
@@ -195,7 +195,7 @@ fn opening_plays_the_intro_from_a_closed_pose() {
     }
     assert!(rising > 0.05 && rising < 0.95, "it fades in: {rising}");
     assert!((opacity(&rt) - 1.0).abs() < 0.01, "and lands open");
-    assert!(rt.find("burst-1").is_some() && rt.find("stars-1").is_some());
+    assert!(rt.find("burst-1").is_some());
 
     // The next opening replays it.
     rt.update(|s, _| s.hide_panel());
@@ -550,7 +550,7 @@ fn opening_the_wand_comes_first_and_casts_the_bar() {
     rt.poll = crate::spec().poll;
     rt.update(|s, _| s.focus_changed(true));
     let panel = |rt: &Runtime<Cantrip>| rt.presented("shell").map(|p| (p.0, p.1));
-    for _ in 0..8 {
+    for _ in 0..5 {
         rt.frame(1.0 / 60.0);
     }
     assert!(
@@ -559,7 +559,7 @@ fn opening_the_wand_comes_first_and_casts_the_bar() {
     );
     let (rect, _) = panel(&rt).unwrap();
     assert!(rect[2] < 40.0, "the bar is still a speck: {rect:?}");
-    for _ in 0..24 {
+    for _ in 0..20 {
         rt.frame(1.0 / 60.0);
     }
     let (rect, opacity) = panel(&rt).unwrap();
@@ -567,11 +567,11 @@ fn opening_the_wand_comes_first_and_casts_the_bar() {
         opacity > 0.9 && rect[2] > 600.0,
         "the bar has swelled out: {rect:?}"
     );
-    for _ in 0..60 {
+    for _ in 0..12 {
         rt.frame(1.0 / 60.0);
     }
     assert!(
         rt.find("hero").is_none(),
-        "the wand is home in the search row"
+        "the wand is home in the search row by 0.6 s"
     );
 }

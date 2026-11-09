@@ -101,7 +101,7 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
     // The wand flying in, over everything, until it's home in the search row.
     if s.session.is_none()
         && s.revealed
-        && let Some(hero) = s.wand.hero_view(look.scale, &p)
+        && let Some(hero) = s.wand.hero_view(look.scale)
     {
         root = root.child(hero);
     }
@@ -146,9 +146,6 @@ fn panel(s: &Cantrip, look: Look) -> El {
         .child(play(footer(s, look), look.intro.map(Intro::footer)));
     if s.actions_open {
         panel = panel.child(action_panel(s, look));
-    }
-    if let Some(intro) = look.intro {
-        panel = panel.child(intro.stars(PANEL_SIZE.0, p));
     }
     // Live and at rest, the desktop behind is blurred (the material replaces the fill) and
     // tinted with ink by the aurora; headless renders draw the fill. The native blur sits under

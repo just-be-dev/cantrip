@@ -1,7 +1,6 @@
-//! The bar's entrance. The wand comes first, alone, and twirls in (`wand.rs`); at `GROW` it
-//! casts the bar, which swells out of its tip with a shockwave and sparks while the wand flies
-//! home to the search row. Then the aurora blooms, the glowing rule draws itself across, and
-//! the rows rise in one after another. All of it is `El::sequence` on Rune's render clock: no state changes while
+//! The bar's entrance, about 0.6 s. The wand pops in first, alone (`wand.rs`); at `GROW` it
+//! casts the bar, which grows out of its tip with a shockwave while the wand flies home to the
+//! search row. The aurora, the glowing rule and the rows follow quickly behind. All of it is `El::sequence` on Rune's render clock: no state changes while
 //! it plays, and it sleeps once it lands. Reduce Motion lands every final pose at once.
 
 use rune::{Beat, Color, Easing, El, Sequence, Shadow, el};
@@ -12,27 +11,26 @@ use super::palette::Palette;
 pub const CLOSED: &[Beat] = &[Beat::new(0.0).opacity(0.0), Beat::new(0.001).opacity(0.0)];
 
 /// When the wand casts the bar: seconds into the opening.
-pub const GROW: f64 = 0.3;
+pub const GROW: f64 = 0.14;
 
 /// The bar swells out of the wand's tip (the shell's origin). Until then it holds at a speck
 /// under the tip: a native blur ignores opacity, so it hides by size.
 const PANEL: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.001),
     Beat::new(GROW).opacity(0.0).scale(0.001),
-    Beat::new(GROW + 0.07)
+    Beat::new(GROW + 0.05)
         .opacity(1.0)
-        .scale(0.2)
+        .scale(0.25)
         .easing(Easing::EASE_IN),
-    Beat::new(GROW + 0.32).scale(1.015).easing(Easing::ENTER),
-    Beat::new(GROW + 0.44).scale(1.0),
+    Beat::new(GROW + 0.22).easing(Easing::ENTER),
 ];
 const BLOOM: &[Beat] = &[
-    Beat::new(0.0).opacity(0.0).scale(0.45),
-    Beat::new(0.5)
+    Beat::new(0.0).opacity(0.0).scale(0.6),
+    Beat::new(0.3)
         .opacity(1.0)
-        .scale(1.12)
+        .scale(1.06)
         .easing(Easing::ENTER),
-    Beat::new(1.1).scale(1.0),
+    Beat::new(0.55).scale(1.0),
 ];
 /// The HUD's spark pops in.
 const ORB: &[Beat] = &[
@@ -43,61 +41,21 @@ const ORB: &[Beat] = &[
         .easing(Easing::OVERSHOOT),
     Beat::new(0.5).scale(1.0),
 ];
-const SPARKS: &[Beat] = &[
-    Beat::new(0.0).opacity(0.0).scale(0.2),
-    Beat::new(0.08)
-        .opacity(1.0)
-        .scale(0.6)
-        .easing(Easing::EASE_OUT),
-    Beat::new(0.7)
-        .opacity(0.0)
-        .scale(1.45)
-        .easing(Easing::EASE_OUT),
-];
 const RING: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.4),
-    Beat::new(0.06).opacity(0.9).scale(0.6),
-    Beat::new(0.42)
+    Beat::new(0.04).opacity(0.9).scale(0.6),
+    Beat::new(0.32)
         .opacity(0.0)
         .scale(4.0)
         .easing(Easing::EASE_OUT),
 ];
-const TWINKLE: &[Beat] = &[
-    Beat::new(0.0).opacity(0.0).scale(0.0),
-    Beat::new(0.14)
-        .opacity(1.0)
-        .scale(1.3)
-        .easing(Easing::EASE_OUT),
-    Beat::new(0.5)
-        .opacity(0.0)
-        .scale(0.15)
-        .easing(Easing::EASE_IN),
-];
-/// Stars along the search row: (x, y, size in points, colour), left to right.
-const STARS: &[(f32, f32, f32, usize)] = &[
-    (78.0, 14.0, 11.0, 0),
-    (112.0, 46.0, 8.0, 1),
-    (158.0, 22.0, 13.0, 2),
-    (205.0, 52.0, 7.0, 0),
-    (248.0, 10.0, 9.0, 1),
-    (296.0, 40.0, 12.0, 0),
-    (344.0, 18.0, 7.0, 2),
-    (392.0, 50.0, 10.0, 1),
-    (438.0, 12.0, 8.0, 0),
-    (486.0, 36.0, 12.0, 2),
-    (532.0, 54.0, 7.0, 1),
-    (580.0, 20.0, 10.0, 0),
-    (628.0, 44.0, 8.0, 2),
-    (676.0, 14.0, 11.0, 1),
-    (720.0, 40.0, 7.0, 0),
-];
 const DRAW: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.0),
-    Beat::new(0.55).easing(Easing::DRAW_ON),
+    Beat::new(0.35).easing(Easing::DRAW_ON),
 ];
 const RISE: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.97),
-    Beat::new(0.3).easing(Easing::ENTER),
+    Beat::new(0.22).easing(Easing::ENTER),
 ];
 const POP: &[Beat] = &[
     Beat::new(0.0).opacity(0.0).scale(0.82),
@@ -107,7 +65,7 @@ const POP: &[Beat] = &[
         .easing(Easing::OVERSHOOT),
     Beat::new(0.4).scale(1.0),
 ];
-const FADE: &[Beat] = &[Beat::new(0.0).opacity(0.0), Beat::new(0.35)];
+const FADE: &[Beat] = &[Beat::new(0.0).opacity(0.0), Beat::new(0.25)];
 
 /// Rows past this many are below the fold anyway; they just appear.
 pub const STAGGERED_ROWS: usize = 9;
@@ -133,13 +91,13 @@ impl Intro {
         self.at(PANEL, 0.0)
     }
     pub fn bloom(self, i: usize) -> Sequence {
-        self.at(BLOOM, GROW + 0.04 + i as f64 * 0.08)
+        self.at(BLOOM, GROW + i as f64 * 0.04)
     }
     pub fn rule(self) -> Sequence {
-        self.at(DRAW, GROW + 0.14)
+        self.at(DRAW, GROW + 0.06)
     }
     pub fn row(self, i: usize) -> Sequence {
-        self.at(RISE, GROW + 0.16 + i as f64 * 0.032)
+        self.at(RISE, GROW + 0.08 + i as f64 * 0.02)
     }
     /// The HUD's spark pops in with its capsule.
     pub fn orb(self) -> Sequence {
@@ -156,70 +114,13 @@ impl Intro {
         self.row(0)
     }
     pub fn footer(self) -> Sequence {
-        self.at(FADE, GROW + 0.24)
+        self.at(FADE, GROW + 0.12)
     }
 
-    /// Stars that twinkle across the search row from the wand outward, as if the bar were
-    /// drawn by it. Keyed by the opening.
-    pub fn stars(self, width: f32, p: Palette) -> El {
-        let mut layer = el()
-            .key(format!("stars-{}", self.n))
-            .a11y_hidden()
-            .inert()
-            .pin(Some(0.0), Some(0.0), Some(0.0), None)
-            .h(64.0)
-            .raise();
-        for &(x, y, size, c) in STARS {
-            let color = [
-                p.magenta.mix(Color::WHITE, 0.25),
-                p.violet.mix(Color::WHITE, 0.45),
-                Color::WHITE,
-            ][c];
-            let delay = GROW + 0.1 + (x / width) as f64 * 0.42;
-            layer = layer.child(
-                el().absolute(x - size / 2.0, y - size / 2.0)
-                    .size(size, size)
-                    .center()
-                    .sequence(self.at(TWINKLE, delay))
-                    .child(
-                        rune::text("✦")
-                            .font(rune::TextStyle::new(size, 600.0).lh(size))
-                            .color(color),
-                    ),
-            );
-        }
-        layer
-    }
-
-    /// Sparks and a shockwave thrown from the wand's tip as it casts the bar, centred on
-    /// (`cx`, `cy`). Keyed by the opening, so each one is a fresh burst.
+    /// A shockwave from the wand's tip as it casts the bar, centred on (`cx`, `cy`). Keyed by
+    /// the opening, so each one is fresh.
     pub fn burst(self, cx: f32, cy: f32, p: Palette) -> El {
         const SIZE: f32 = 150.0;
-        const SPARK_COUNT: usize = 14;
-        let mut sparks = el().size(SIZE, SIZE).sequence(self.at(SPARKS, GROW - 0.01));
-        for i in 0..SPARK_COUNT {
-            let angle = i as f32 / SPARK_COUNT as f32 * std::f32::consts::TAU + 0.2;
-            let (radius, size) = if i % 2 == 0 { (50.0, 5.0) } else { (36.0, 3.0) };
-            let color = [p.magenta, p.violet.mix(Color::WHITE, 0.4), Color::WHITE][i % 3];
-            let (x, y) = (
-                SIZE / 2.0 + radius * angle.cos() - size / 2.0,
-                SIZE / 2.0 + radius * angle.sin() - size / 2.0,
-            );
-            sparks = sparks.child(
-                el().absolute(x, y)
-                    .size(size, size)
-                    .radius(size / 2.0)
-                    .fill(color)
-                    .box_shadow(Shadow {
-                        x: 0.0,
-                        y: 0.0,
-                        blur: 8.0,
-                        spread: 1.0,
-                        color: color.alpha(0.9),
-                        inset: false,
-                    }),
-            );
-        }
         let ring = el()
             .absolute(SIZE / 2.0 - 30.0, SIZE / 2.0 - 30.0)
             .size(60.0, 60.0)
@@ -233,7 +134,7 @@ impl Intro {
                 color: p.magenta.alpha(0.7),
                 inset: false,
             })
-            .sequence(self.at(RING, GROW - 0.03));
+            .sequence(self.at(RING, GROW - 0.02));
         el().key(format!("burst-{}", self.n))
             .a11y_hidden()
             .inert()
@@ -241,6 +142,5 @@ impl Intro {
             .size(SIZE, SIZE)
             .raise()
             .child(ring)
-            .child(sparks)
     }
 }
