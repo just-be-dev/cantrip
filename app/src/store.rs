@@ -14,7 +14,7 @@ use crate::fuzzy;
 use crate::icons::Icon;
 use crate::protocol::*;
 use crate::services::Services;
-use crate::views::wand::Wand;
+use crate::views::wand::{Gesture, Signals, Wand};
 
 /// Set while a shown panel waits for its first drawn frame to start the intro.
 pub static AWAITING_FRAME: AtomicBool = AtomicBool::new(false);
@@ -318,6 +318,7 @@ impl Cantrip {
                 });
             }
         } else {
+            self.wand.edited(&self.root_query, &text);
             self.root_query = text;
             self.root_selection = 0;
         }
@@ -581,6 +582,9 @@ impl Cantrip {
 
     pub fn perform(&mut self, action: ActionItem, tx: &mut Tx) {
         self.actions_open = false;
+        if self.session.is_none() {
+            self.wand.cue(Gesture::Cast);
+        }
         match action.kind {
             ActionKindItem::RunSpell(command) => {
                 self.bump_usage(&format!("spell:{}", command.id));
@@ -783,7 +787,11 @@ impl Cantrip {
         self.hidden_at = Some(Instant::now());
         AWAITING_FRAME.store(false, Ordering::Relaxed);
         if self.services.live {
-            // Disperse first; the window hides when that's done (`finish_close`).
+            // Disperse first; the window hides when that's done (`finish_close`). The wand
+            // spins away with it, unless it's in the middle of casting what closed the bar.
+            if !self.wand.casting() {
+                self.wand.cue(Gesture::Vanish);
+            }
             self.closing = true;
             self.outro += 1;
             self.services
@@ -859,17 +867,23 @@ impl Cantrip {
     }
 
     /// Draws the wand's next frame, `t` seconds into the frame clock. It's in the search bar
-    /// while no spell is open, and up whenever the panel is open or dispersing.
-    pub fn animate_wand(&mut self, t: f64, tx: &mut Tx) {
-        let shown = self.session.is_none() && (self.visible && self.revealed || self.closing);
-        let live = self.services.live;
-        self.wand.frame(
-            t,
+    /// while no spell is open (or one is opening as it casts), and up whenever the panel is
+    /// open or dispersing. True when the view must rebuild for it.
+    pub fn animate_wand(&mut self, t: f64, tx: &mut Tx) -> bool {
+        let at_root = self.session.is_none() || self.wand.casting();
+        let shown = at_root && (self.visible && self.revealed || self.closing);
+        let fizzled =
+            self.session.is_none() && !self.root_query.is_empty() && self.rows().is_empty();
+        let signals = Signals {
             shown,
-            self.intro,
-            || live && crate::platform::reduce_motion(),
-            tx,
-        );
+            intro: self.intro,
+            query: &self.root_query,
+            fizzled,
+            scroll: self.scroll.get().offset,
+        };
+        let live = self.services.live;
+        self.wand
+            .frame(t, signals, || live && crate::platform::reduce_motion(), tx)
     }
 
     /// Timers: toasts and the HUD go away by themselves. True when something visible changed.
@@ -946,6 +960,13 @@ impl Cantrip {
             let count = self.rows().len() as i64;
             if count > 0 {
                 let next = (self.selection() as i64 + delta).clamp(0, count - 1) as usize;
+                // The wand flicks with the selection, or shakes its head at the list's end.
+                let up = delta < 0;
+                self.wand.cue(if next == self.selection() {
+                    Gesture::Bump { up }
+                } else {
+                    Gesture::Flick { up }
+                });
                 self.set_selection(next);
                 self.reveal_selection(tx);
             }
@@ -1012,6 +1033,7 @@ impl Cantrip {
                     let title = format!("{} spell(s) failed to load", errors.len());
                     self.show_toast(ToastStyle::Failure, &title, Some(errors.join("\n")), tx);
                 } else if self.reload_requested {
+                    self.wand.cue(Gesture::Recharge);
                     self.show_toast(
                         ToastStyle::Success,
                         &format!("{count} spells loaded"),

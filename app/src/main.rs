@@ -44,8 +44,8 @@ pub fn spec() -> AppSpec<Cantrip> {
         scenes: fixtures::SCENES,
         setup: Some(|_, waker| icons::install(waker)),
         poll: Some(|s, t, tx| {
-            s.animate_wand(t, tx);
-            s.tick(Instant::now())
+            let wand = s.animate_wand(t, tx);
+            s.tick(Instant::now()) || wand
         }),
         on_key: Some(on_key),
         ..AppSpec::new(

@@ -30,6 +30,18 @@ pub const MARGIN: f32 = 44.0;
 /// The window: the panel and its margin.
 pub const WINDOW_SIZE: (f32, f32) = (PANEL_SIZE.0 + 2.0 * MARGIN, PANEL_SIZE.1 + 2.0 * MARGIN);
 
+/// The search row: its height, side padding, the wand's (or back button's) slot, and the gap
+/// before the field.
+const SEARCH_H: f32 = 64.0;
+const SEARCH_PAD: f32 = 16.0;
+const LEADING: f32 = 34.0;
+const SEARCH_GAP: f32 = 14.0;
+/// In window points: the middle of the wand's slot, where the field's text starts, and the
+/// search row's middle line.
+pub const WAND_CENTER: [f32; 2] = [MARGIN + SEARCH_PAD + LEADING / 2.0, MARGIN + SEARCH_H / 2.0];
+pub const FIELD_X: f32 = MARGIN + SEARCH_PAD + LEADING + SEARCH_GAP;
+pub const ROW_MID: f32 = MARGIN + SEARCH_H / 2.0;
+
 const ROW_H: f32 = 44.0;
 const ROW_GAP: f32 = 2.0;
 pub const LIST_PAD: f32 = 8.0;
@@ -82,8 +94,13 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         .padding(MARGIN)
         .child(panel(s, look));
     if let Some(intro) = look.intro {
-        // Thrown from the wand's orb: 16 pt in, centred in the 64 pt search row.
-        root = root.child(intro.burst(MARGIN + 16.0 + 17.0, MARGIN + 32.0, p));
+        // Thrown from the wand.
+        root = root.child(intro.burst(WAND_CENTER[0], WAND_CENTER[1], p));
+    }
+    if s.session.is_none()
+        && let Some(spells) = s.wand.spells_view(&s.field.text, &p)
+    {
+        root = root.child(spells);
     }
     if s.closing {
         root = root.child(Outro::new(s.outro).dust(MARGIN, MARGIN, PANEL_SIZE, p));
@@ -246,8 +263,9 @@ fn orb(size: f32, look: Look) -> El {
 
 fn search_bar(s: &Cantrip, look: Look) -> El {
     let p = look.p;
-    let leading = if s.session.is_some() {
-        orb(34.0, look)
+    // Mid-cast, the wand holds its place a moment before the spell's back button takes it.
+    let leading = if s.session.is_some() && !s.wand.casting() {
+        orb(LEADING, look)
             .key("back")
             .role("button")
             .label("Back")
@@ -261,17 +279,27 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
             ))
     } else {
         // The wand stands on its own, in the orb's place, and pops in as the orb would.
-        play(
-            el().key("wand").size(34.0, 34.0),
-            look.intro.map(Intro::orb),
-        )
-        .child(s.wand.view(34.0, look.scale))
+        // Click it and it twirls; point at it and it perks up.
+        let wand = el()
+            .key("wand")
+            .size(LEADING, LEADING)
+            .a11y_hidden()
+            .on_press(|s: &mut Cantrip| s.wand.cue(wand::Gesture::Poke))
+            .on_hover_change(|s: &mut Cantrip, inside, _| s.wand.hover(inside));
+        play(wand, look.intro.map(Intro::orb)).child(s.wand.view(LEADING, look.scale))
     };
-    let field = text_input(&s.field, font(21.0, 400.0).lh(28.0).tracking(-0.2))
+    // The wand writes the query: characters are hidden until its spark lands, then glow.
+    let spans = if s.session.is_none() {
+        s.wand.spans(&s.field.text, &p)
+    } else {
+        Vec::new()
+    };
+    let field = text_input(&s.field, wand::spells::query_style())
         .key("query")
         .single_line()
         .grow(1.0)
         .color(p.text)
+        .spans(spans)
         .caret(p.magenta, p.violet.alpha(0.45))
         .placeholder(s.placeholder(), p.faint)
         .on_edit(|s: &mut Cantrip| &mut s.field)
@@ -286,9 +314,9 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
         .on_submit(|s: &mut Cantrip, tx: &mut Tx| s.submit(false, tx));
     row()
         .key("search")
-        .h(64.0)
-        .px(16.0)
-        .gap(14.0)
+        .h(SEARCH_H)
+        .px(SEARCH_PAD)
+        .gap(SEARCH_GAP)
         .center_y()
         .child(leading)
         .child(field)

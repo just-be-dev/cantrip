@@ -462,3 +462,38 @@ fn new_spells_show_up_in_the_search_as_they_load() {
         Some("1 spell(s) failed to load")
     );
 }
+
+#[test]
+fn the_wand_answers_the_bar() {
+    use crate::views::wand::Gesture;
+    let mut rt = runtime(fixtures::root);
+    press(&mut rt, Key::Up);
+    press(&mut rt, Key::Down);
+    assert_eq!(
+        rt.state.wand.cued(),
+        [Gesture::Bump { up: true }, Gesture::Flick { up: false }],
+        "it shakes its head at the top of the list, then flicks down with the selection"
+    );
+
+    type_text(&mut rt, "hello");
+    let spans = rt
+        .state
+        .wand
+        .spans("hello", &crate::views::palette::arcane());
+    assert_eq!(
+        spans.len(),
+        5,
+        "every typed character is the wand's to write"
+    );
+    assert!(
+        spans.iter().all(|s| s.color.unwrap().a == 0.0),
+        "and stays hidden until its spark lands"
+    );
+
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.session.is_some() && rt.state.wand.casting());
+    assert!(
+        rt.find("wand").is_some() && rt.find("back").is_none(),
+        "mid-cast, the wand keeps its place over the spell"
+    );
+}
