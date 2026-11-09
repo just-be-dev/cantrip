@@ -25,8 +25,17 @@ pub fn view(h: &Hud, cx: &mut Cx<Hud>) -> El {
         .size(22.0, 22.0)
         .radius(11.0)
         .center()
-        .radial_gradient([0.35, 0.3], 20.0, [(0.0, p.violet.alpha(0.7)), (1.0, p.magenta.alpha(0.15))])
-        .child(icons::view(&Icon::Symbol("wand.and.sparkles".into()), 13.0, p.text, cx.env().scale));
+        .radial_gradient(
+            [0.35, 0.3],
+            20.0,
+            [(0.0, p.violet.alpha(0.7)), (1.0, p.magenta.alpha(0.15))],
+        )
+        .child(icons::view(
+            &Icon::Symbol("wand.and.sparkles".into()),
+            13.0,
+            p.text,
+            cx.env().scale,
+        ));
     let capsule = row()
         .key("capsule")
         .h(42.0)
@@ -38,9 +47,34 @@ pub fn view(h: &Hud, cx: &mut Cx<Hud>) -> El {
         .fill(p.raised)
         .linear_gradient(FRAC_PI_2, p.sweep(0.7))
         .border_gradient(1.0, Color::WHITE.alpha(0.24), Color::WHITE.alpha(0.05))
-        .box_shadow(Shadow { x: 0.0, y: 8.0, blur: 28.0, spread: 0.0, color: Color::BLACK.alpha(0.45), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 24.0, spread: 0.0, color: p.violet.alpha(0.35), inset: false })
+        .box_shadow(Shadow {
+            x: 0.0,
+            y: 8.0,
+            blur: 28.0,
+            spread: 0.0,
+            color: Color::BLACK.alpha(0.45),
+            inset: false,
+        })
+        .box_shadow(Shadow {
+            x: 0.0,
+            y: 0.0,
+            blur: 24.0,
+            spread: 0.0,
+            color: p.violet.alpha(0.35),
+            inset: false,
+        })
         .child(play(spark, intro.map(Intro::orb)))
-        .child(text(h.message.clone()).key("message").font(TextStyle::new(13.0, 600.0)).color(p.text).max_lines(2));
-    row().key("hud").w_full().h_full().center().child(play(capsule, intro.map(Intro::hud)))
+        .child(
+            text(h.message.clone())
+                .key("message")
+                .font(TextStyle::new(13.0, 600.0))
+                .color(p.text)
+                .max_lines(2),
+        );
+    row()
+        .key("hud")
+        .w_full()
+        .h_full()
+        .center()
+        .child(play(capsule, intro.map(Intro::hud)))
 }

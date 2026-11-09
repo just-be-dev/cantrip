@@ -3,6 +3,7 @@
 
 pub mod hud;
 pub mod intro;
+pub mod outro;
 pub mod palette;
 
 use std::f32::consts::{FRAC_PI_2, PI};
@@ -18,10 +19,16 @@ use crate::icons::{self, Icon};
 use crate::protocol::{ToastStyle, WireMetadata, WireView};
 use crate::store::{Cantrip, Row, row_key};
 use intro::Intro;
+use outro::Outro;
 use palette::Palette;
 
 pub const PANEL_SIZE: (f32, f32) = (760.0, 480.0);
 pub const RADIUS: f32 = 16.0;
+/// Clear space around the panel inside its window, for its shadow and glow and for sparks and
+/// stardust to fly past its edges.
+pub const MARGIN: f32 = 44.0;
+/// The window: the panel and its margin.
+pub const WINDOW_SIZE: (f32, f32) = (PANEL_SIZE.0 + 2.0 * MARGIN, PANEL_SIZE.1 + 2.0 * MARGIN);
 
 const ROW_H: f32 = 44.0;
 const ROW_GAP: f32 = 2.0;
@@ -57,6 +64,19 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         intro: Intro::new(s.intro).filter(|_| s.revealed),
     };
     let p = look.p;
+    let mut root = el().key("root").w_full().h_full().padding(MARGIN).child(panel(s, look));
+    if let Some(intro) = look.intro {
+        // Thrown from the wand's orb: 16 pt in, centred in the 64 pt search row.
+        root = root.child(intro.burst(MARGIN + 16.0 + 17.0, MARGIN + 32.0, p));
+    }
+    if s.closing {
+        root = root.child(Outro::new(s.outro).dust(MARGIN, MARGIN, PANEL_SIZE, p));
+    }
+    root
+}
+
+fn panel(s: &Cantrip, look: Look) -> El {
+    let p = look.p;
     let loading = s.session.as_ref().is_some_and(|s| s.loading());
     let mut panel = col()
         .key("panel")
@@ -65,9 +85,6 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         .radius(RADIUS)
         .continuous_corners()
         .clip_rounded(RADIUS)
-        // Live, the desktop behind is blurred (the material replaces this fill) and tinted with
-        // ink by the aurora; headless renders draw the fill.
-        .system_material(SystemMaterial::Popover)
         .fill(p.bg)
         .border_gradient(1.0, Color::WHITE.alpha(0.20), Color::WHITE.alpha(0.05))
         .box_shadow(Shadow {
@@ -78,6 +95,7 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
             color: p.violet.alpha(0.16),
             inset: true,
         })
+
         // The search field keeps the keyboard whatever is clicked (rows, actions, back).
         .preserve_focus_on_press(true)
         .child(aurora(look))
@@ -90,14 +108,34 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         panel = panel.child(action_panel(s, look));
     }
     if let Some(intro) = look.intro {
-        // Thrown from the wand's orb: 16 pt in, centred in the 64 pt search row.
-        panel = panel.child(intro.burst(16.0 + 17.0, 32.0, p));
         panel = panel.child(intro.stars(PANEL_SIZE.0, p));
     }
+    // Live and at rest, the desktop behind is blurred (the material replaces the fill) and
+    // tinted with ink by the aurora; headless renders draw the fill. The native blur sits under
+    // everything Rune draws and doesn't fade with it, so it's only there while the bar is open:
+    // closing, and while hidden, the ink glass fades on its own.
+    if s.revealed && !s.closing {
+        panel = panel.system_material(SystemMaterial::Popover);
+    }
+    // The shell carries what the panel's rounded clip would cut off (its shadow and glow) and
+    // the whole entrance and exit.
+    let shell = el()
+        .key("shell")
+        .w_full()
+        .h_full()
+        .radius(RADIUS)
+        .continuous_corners()
+        // The window draws no shadow of its own (it's larger than the panel): this is it.
+        .box_shadow(Shadow { x: 0.0, y: 18.0, blur: 48.0, spread: -6.0, color: Color::BLACK.alpha(0.55), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 40.0, spread: -8.0, color: p.violet.alpha(0.3), inset: false })
+        // Dispersing, the glass goes soft as it fades.
+        .blur(if s.closing { 9.0 } else { 0.0 })
+        .child(panel);
     match (s.revealed, look.intro) {
-        (false, _) => panel.sequence(Sequence::new(intro::CLOSED)),
-        (true, Some(intro)) => panel.sequence(intro.panel()),
-        (true, None) => panel,
+        _ if s.closing => shell.sequence(Outro::new(s.outro).glass()),
+        (false, _) => shell.sequence(Sequence::new(intro::CLOSED)),
+        (true, Some(intro)) => shell.sequence(intro.panel()),
+        (true, None) => shell,
     }
 }
 

@@ -12,6 +12,7 @@ pub type Scene = (&'static str, fn(&mut Cantrip));
 pub const SCENES: &[Scene] = &[
     ("root", root),
     ("opening", opening),
+    ("closing", closing),
     ("query", query),
     ("empty", empty),
     ("actions", actions),
@@ -135,6 +136,15 @@ pub fn root(s: &mut Cantrip) {
 fn opening(s: &mut Cantrip) {
     root(s);
     s.revealed = false;
+}
+
+/// Mid-exit: the glass disperses into stardust (render it over time with `--at`/`--strip`).
+fn closing(s: &mut Cantrip) {
+    root(s);
+    s.visible = false;
+    s.revealed = false;
+    s.closing = true;
+    s.outro = 1;
 }
 
 fn query(s: &mut Cantrip) {

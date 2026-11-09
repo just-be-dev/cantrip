@@ -71,6 +71,15 @@ impl Services {
         }
     }
 
+    /// Hide the window once the exit has played, if it's still closing then.
+    pub fn hide_panel_after(&mut self, delay: Duration, outro: u64) {
+        let Some(panel) = self.panel.clone() else { return self.hide_panel() };
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            panel.update(move |s, _| s.finish_close(outro));
+        });
+    }
+
     /// Centred across, high on the screen with the pointer, like Spotlight.
     pub fn show_panel(&mut self) {
         let Some(panel) = &self.panel else {
@@ -80,7 +89,7 @@ impl Services {
             DisplayTarget::UnderPointer,
             OverlayPlacement::Edge {
                 edge: ScreenEdge::Top,
-                margin: 150.0,
+                margin: 150.0 - crate::views::MARGIN,
                 align: rune::Align::Center,
                 inset: 0.0,
             },

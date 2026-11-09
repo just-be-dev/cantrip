@@ -45,7 +45,7 @@ pub fn spec() -> AppSpec<Cantrip> {
         on_key: Some(on_key),
         ..AppSpec::new(
             "Cantrip",
-            views::PANEL_SIZE,
+            views::WINDOW_SIZE,
             || Cantrip::new(Services::default()),
             views::view,
         )
@@ -64,7 +64,7 @@ fn main() {
         .keep_running()
         .accessory()
         .configured_options(
-            WindowOptions::launcher_panel().macos(|native| native.corner_radius(views::RADIUS)),
+            WindowOptions::launcher_panel().macos(|native| native.shadow(false)),
         )
         .on_focus(|s, focused, _| s.focus_changed(focused))
         .on_quit(|s, _| {

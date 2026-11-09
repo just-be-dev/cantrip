@@ -211,6 +211,10 @@ pub struct Cantrip {
     pub intro: u64,
     /// The rows rise in after an opening, until the first keystroke.
     pub intro_rows: bool,
+    /// The exit is playing; the window hides when it ends.
+    pub closing: bool,
+    /// Counts closings; each one replays the exit.
+    pub outro: u64,
     shown_at: Option<Instant>,
 
     root_query: String,
@@ -244,6 +248,8 @@ impl Cantrip {
             revealed: true,
             intro: 0,
             intro_rows: false,
+            closing: false,
+            outro: 0,
             shown_at: None,
             root_query: String::new(),
             root_selection: 0,
@@ -753,12 +759,37 @@ impl Cantrip {
         self.focused = false;
         self.revealed = false;
         self.hidden_at = Some(Instant::now());
-        self.services.hide_panel();
+        AWAITING_FRAME.store(false, Ordering::Relaxed);
+        if self.services.live {
+            // Disperse first; the window hides when that's done (`finish_close`).
+            self.closing = true;
+            self.outro += 1;
+            self.services.hide_panel_after(crate::views::outro::OUTRO, self.outro);
+        } else {
+            self.services.hide_panel();
+        }
+    }
+
+    /// The exit `outro` has played: hide the window, unless the bar was reopened meanwhile.
+    pub fn finish_close(&mut self, outro: u64) {
+        if self.closing && self.outro == outro {
+            self.closing = false;
+            self.services.hide_panel();
+        }
     }
 
     pub fn show_panel(&mut self) {
         if self.hidden_at.is_some_and(|at| at.elapsed() > FRESH_AFTER) {
             self.reset();
+        }
+        if self.closing {
+            // Reopened mid-exit: the window is still up, so the intro plays straight away.
+            self.closing = false;
+            self.visible = true;
+            self.sync_field();
+            self.reveal();
+            self.services.show_panel();
+            return;
         }
         if !(self.visible && self.revealed) {
             self.revealed = false;

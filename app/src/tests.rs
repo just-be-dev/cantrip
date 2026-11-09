@@ -15,7 +15,7 @@ fn runtime(scene: fn(&mut Cantrip)) -> Runtime<Cantrip> {
     let mut rt = Runtime::new(
         state,
         views::view,
-        views::PANEL_SIZE,
+        views::WINDOW_SIZE,
         Env {
             system_dark: true,
             scale: 2.0,
@@ -187,6 +187,34 @@ fn opening_plays_the_intro_from_a_closed_pose() {
         rt.frame(1.0 / 60.0);
     }
     assert!(opacity(&rt) < 0.95, "a second opening plays again: {}", opacity(&rt));
+}
+
+#[test]
+fn closing_disperses_before_the_window_hides_and_reopening_mid_way_plays_the_intro() {
+    let mut rt = runtime(fixtures::root);
+    // As the live app does; with no panel handle the delayed hide lands at once in the log.
+    rt.state.services.live = true;
+    rt.update(|s, _| s.hide_panel());
+    settle(&mut rt);
+    assert!(rt.state.closing, "the exit plays");
+    assert_eq!(rt.state.outro, 1);
+    assert!(rt.find("dust-1").is_some(), "with stardust");
+    assert_eq!(log(&mut rt), ["hide-panel"]);
+    rt.update(|s, _| s.finish_close(1));
+    assert!(!rt.state.closing);
+    assert_eq!(log(&mut rt), ["hide-panel"], "then the window hides");
+
+    rt.update(|s, _| s.show_panel());
+    rt.update(|s, _| s.focus_changed(true));
+    rt.update(|s, _| s.reveal());
+    rt.update(|s, _| s.hide_panel());
+    assert!(rt.state.closing);
+    rt.update(|s, _| s.show_panel());
+    assert!(!rt.state.closing && rt.state.visible && rt.state.revealed, "reopened mid-exit, it's back");
+    let intro = rt.state.intro;
+    rt.update(|s, _| s.finish_close(2));
+    assert!(rt.state.visible, "and the late hide does nothing");
+    assert_eq!(rt.state.intro, intro);
 }
 
 #[test]
