@@ -1,7 +1,7 @@
 //! App state: the root search, the running spell session, and what each key and action does.
 //! Everything here runs on the UI thread, in Rune handlers and `AppHandle::update`s.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +19,17 @@ use crate::services::Services;
 pub static AWAITING_FRAME: AtomicBool = AtomicBool::new(false);
 /// Play the intro anyway if no frame or keyboard arrives by then (another app kept focus).
 pub const REVEAL_FALLBACK: Duration = Duration::from_millis(600);
+
+/// The results list's scroll position: offset, visible height and furthest offset, in points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollWatch {
+    pub offset: f32,
+    pub viewport: f32,
+    pub max: f32,
+}
+
+/// A glide asked for this recently may still be under way.
+const GLIDE_RECENT: Duration = Duration::from_millis(600);
 
 /// Reopening the bar after this long starts fresh at the root search (like Raycast).
 pub const FRESH_AFTER: Duration = Duration::from_secs(90);
@@ -216,6 +227,11 @@ pub struct Cantrip {
     /// Counts closings; each one replays the exit.
     pub outro: u64,
     shown_at: Option<Instant>,
+    /// The results list's scroll position, as Rune last reported it.
+    pub scroll: Rc<Cell<ScrollWatch>>,
+    /// Where the last glide is headed and when it was asked for: key repeat asks again before
+    /// the list gets there, so the next step starts from where it's going.
+    scroll_target: Option<(f32, Instant)>,
 
     root_query: String,
     root_selection: usize,
@@ -251,6 +267,8 @@ impl Cantrip {
             closing: false,
             outro: 0,
             shown_at: None,
+            scroll: Rc::default(),
+            scroll_target: None,
             root_query: String::new(),
             root_selection: 0,
             next_session: 0,
@@ -905,9 +923,43 @@ impl Cantrip {
             if count > 0 {
                 let next = (self.selection() as i64 + delta).clamp(0, count - 1) as usize;
                 self.set_selection(next);
-                tx.scroll_into_view(row_key(next));
+                self.reveal_selection(tx);
             }
         }
+    }
+
+    /// Keep the selected row in view, gliding the list just far enough on the spring the
+    /// highlight moves on, so the two travel together and the highlight holds still at the
+    /// list's edge instead of jumping a row and springing back.
+    pub fn reveal_selection(&mut self, tx: &mut Tx) {
+        let at = self.scroll.get();
+        if at.viewport <= 0.0 {
+            // Not laid out yet: no glide to match.
+            tx.scroll_into_view(row_key(self.selection()));
+            return;
+        }
+        let header = self.session.is_none() && self.query().is_empty();
+        let (top, bottom) = crate::views::row_span(self.selection(), header);
+        let from = match self.scroll_target {
+            Some((target, asked)) if asked.elapsed() < GLIDE_RECENT => target,
+            _ => at.offset,
+        };
+        let pad = crate::views::LIST_PAD;
+        let to = if self.selection() == 0 {
+            0.0
+        } else if top - pad < from {
+            top - pad
+        } else if bottom + pad > from + at.viewport {
+            bottom + pad - at.viewport
+        } else {
+            return;
+        };
+        let to = to.clamp(0.0, at.max.max(0.0));
+        if (to - from).abs() < 0.5 && (to - at.offset).abs() < 0.5 {
+            return;
+        }
+        self.scroll_target = Some((to, Instant::now()));
+        tx.scroll_to_with(crate::views::RESULTS, 0.0, to, crate::views::GLIDE);
     }
 
     fn escape(&mut self) {

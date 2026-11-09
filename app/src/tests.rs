@@ -242,6 +242,34 @@ fn the_selection_still_glides_after_an_opening() {
 }
 
 #[test]
+fn moving_past_the_bottom_scrolls_smoothly_with_the_selection() {
+    let mut rt = runtime(fixtures::root);
+    let y = |rt: &Runtime<Cantrip>, key: &str| rt.presented(key).map(|p| p.0[1]);
+    let viewport_bottom = |rt: &Runtime<Cantrip>| rt.presented("results").map(|p| p.0[1] + p.0[3]).unwrap();
+    let mut scrolled = false;
+    for _ in 0..12 {
+        let before = rt.state.scroll.get().offset;
+        rt.key(Key::Down.into());
+        let row = crate::store::row_key(rt.state.selection());
+        let (mut last_pill, mut last_row, mut worst) = (y(&rt, "selection").unwrap(), y(&rt, &row), 0.0f32);
+        for _ in 0..60 {
+            rt.frame(1.0 / 60.0);
+            let (pill, now_row) = (y(&rt, "selection").unwrap(), y(&rt, &row));
+            worst = worst.max((pill - last_pill).abs());
+            if let (Some(a), Some(b)) = (last_row, now_row) {
+                worst = worst.max((b - a).abs());
+            }
+            (last_pill, last_row) = (pill, now_row);
+        }
+        assert!(worst < 14.0, "row {} moved {worst} pt in one frame: a pop", rt.state.selection());
+        let pill = rt.presented("selection").unwrap().0;
+        assert!(pill[1] + pill[3] <= viewport_bottom(&rt) + 0.5, "the selection stays in view");
+        scrolled |= rt.state.scroll.get().offset > before + 1.0;
+    }
+    assert!(scrolled, "the list scrolled to follow the selection");
+}
+
+#[test]
 fn a_list_that_filters_in_the_spell_gets_each_query() {
     let mut rt = runtime(fixtures::list);
     let WireView::List {

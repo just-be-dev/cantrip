@@ -9,7 +9,7 @@ pub mod palette;
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use rune::{
-    Sequence,
+    ScrollPos, Sequence,
     Color, Cx, Cycle, El, ScrollSpec, Shadow, Spring, SystemMaterial, TextStyle, Transition, Tx,
     Vec2, col, el, row, spacer, text, text_input,
 };
@@ -17,7 +17,7 @@ use rune_kit::markdown::{Markdown, MarkdownStyle};
 
 use crate::icons::{self, Icon};
 use crate::protocol::{ToastStyle, WireMetadata, WireView};
-use crate::store::{Cantrip, Row, row_key};
+use crate::store::{Cantrip, Row, ScrollWatch, row_key};
 use intro::Intro;
 use outro::Outro;
 use palette::Palette;
@@ -32,10 +32,10 @@ pub const WINDOW_SIZE: (f32, f32) = (PANEL_SIZE.0 + 2.0 * MARGIN, PANEL_SIZE.1 +
 
 const ROW_H: f32 = 44.0;
 const ROW_GAP: f32 = 2.0;
-const LIST_PAD: f32 = 8.0;
+pub const LIST_PAD: f32 = 8.0;
 const SECTION_H: f32 = 26.0;
 /// The selection glides between rows with a touch of overshoot.
-const GLIDE: Spring = Spring::new(0.34, 0.16);
+pub const GLIDE: Spring = Spring::new(0.34, 0.16);
 
 /// Everything a piece of the view needs to draw itself.
 #[derive(Clone, Copy)]
@@ -44,6 +44,15 @@ struct Look {
     scale: f32,
     /// The entrance to play, after an opening.
     intro: Option<Intro>,
+}
+
+/// The scroll viewport the results list in.
+pub const RESULTS: &str = "results";
+
+/// Where row `index` sits in the results' content, top and bottom, in points.
+pub fn row_span(index: usize, header: bool) -> (f32, f32) {
+    let top = LIST_PAD + if header { SECTION_H + ROW_GAP } else { 0.0 } + index as f32 * (ROW_H + ROW_GAP);
+    (top, top + ROW_H)
 }
 
 fn font(size: f32, weight: f32) -> TextStyle {
@@ -244,9 +253,11 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
         .caret(p.magenta, p.violet.alpha(0.45))
         .placeholder(s.placeholder(), p.faint)
         .on_edit(|s: &mut Cantrip| &mut s.field)
-        .on_input_change(|s: &mut Cantrip, _| {
+        .on_input_change(|s: &mut Cantrip, tx| {
             let text = s.field.text.clone();
             s.set_query(text);
+            // The selection went back to the first row: glide the list up to it.
+            s.reveal_selection(tx);
         })
         .on_input_key(|s: &mut Cantrip, ev, tx| s.handle_key(ev, tx))
         // Real ↵ is taken by the key handler; this covers accessibility (AXConfirm).
@@ -396,8 +407,11 @@ fn results(s: &Cantrip, look: Look) -> El {
                     inset: false,
                 }),
         );
+    let watch = s.scroll.clone();
     col()
-        .key("results")
+        .key(RESULTS)
+        // Where the list is scrolled, for keeping the selection in view (`reveal_selection`).
+        .on_scroll_offset(move |at: ScrollPos| watch.set(ScrollWatch { offset: at.offset[1], viewport: at.viewport[1], max: at.max[1] }))
         .w_full()
         .scroll(ScrollSpec {
             stick_bottom: false,
