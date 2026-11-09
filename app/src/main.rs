@@ -41,7 +41,10 @@ pub fn spec() -> AppSpec<Cantrip> {
     AppSpec {
         scenes: fixtures::SCENES,
         setup: Some(|_, waker| icons::install(waker)),
-        poll: Some(|s, _, _| s.tick(Instant::now())),
+        poll: Some(|s, t, tx| {
+            s.animate_wand(t, tx);
+            s.tick(Instant::now())
+        }),
         on_key: Some(on_key),
         ..AppSpec::new(
             "Cantrip",

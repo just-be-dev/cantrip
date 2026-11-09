@@ -684,7 +684,7 @@ impl RingAnimator {
     }
 
     fn reduce_motion() -> bool {
-        NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+        super::reduce_motion()
     }
 
     /// A Core Animation opacity loop: it runs in the render server, so it's cheap even for hours.

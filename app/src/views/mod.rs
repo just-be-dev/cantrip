@@ -5,6 +5,7 @@ pub mod hud;
 pub mod intro;
 pub mod outro;
 pub mod palette;
+pub mod wand;
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -238,12 +239,7 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
                 look.scale,
             ))
     } else {
-        play(orb(34.0, look).key("wand"), look.intro.map(Intro::orb)).child(icons::view(
-            &Icon::Symbol("wand.and.sparkles".into()),
-            18.0,
-            p.text,
-            look.scale,
-        ))
+        play(orb(34.0, look).key("wand"), look.intro.map(Intro::orb)).child(s.wand.view(34.0, look.scale))
     };
     let field = text_input(&s.field, font(21.0, 400.0).lh(28.0).tracking(-0.2))
         .key("query")

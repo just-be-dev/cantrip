@@ -14,6 +14,7 @@ use crate::fuzzy;
 use crate::icons::Icon;
 use crate::protocol::*;
 use crate::services::Services;
+use crate::views::wand::Wand;
 
 /// Set while a shown panel waits for its first drawn frame to start the intro.
 pub static AWAITING_FRAME: AtomicBool = AtomicBool::new(false);
@@ -229,6 +230,8 @@ pub struct Cantrip {
     shown_at: Option<Instant>,
     /// The results list's scroll position, as Rune last reported it.
     pub scroll: Rc<Cell<ScrollWatch>>,
+    /// The 3D wand in the search bar, drawn on the frame clock (`animate_wand`).
+    pub wand: Wand,
     /// Where the last glide is headed and when it was asked for: key repeat asks again before
     /// the list gets there, so the next step starts from where it's going.
     scroll_target: Option<(f32, Instant)>,
@@ -268,6 +271,7 @@ impl Cantrip {
             outro: 0,
             shown_at: None,
             scroll: Rc::default(),
+            wand: Wand::new(),
             scroll_target: None,
             root_query: String::new(),
             root_selection: 0,
@@ -851,6 +855,14 @@ impl Cantrip {
         } else {
             self.show_panel()
         }
+    }
+
+    /// Draws the wand's next frame, `t` seconds into the frame clock. It's in the search bar
+    /// while no spell is open, and up whenever the panel is open or dispersing.
+    pub fn animate_wand(&mut self, t: f64, tx: &mut Tx) {
+        let shown = self.session.is_none() && (self.visible && self.revealed || self.closing);
+        let live = self.services.live;
+        self.wand.frame(t, shown, self.intro, || live && crate::platform::reduce_motion(), tx);
     }
 
     /// Timers: toasts and the HUD go away by themselves. True when something visible changed.

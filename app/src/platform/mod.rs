@@ -38,6 +38,11 @@ pub fn reveal(path: &str) {
         .activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url]));
 }
 
+/// Whether the user asked for less motion (Accessibility ▸ Display ▸ Reduce motion).
+pub fn reduce_motion() -> bool {
+    NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
 fn url_for(target: &str) -> Option<Retained<NSURL>> {
     if target.starts_with('/') || target.starts_with('~') {
         let path = crate::config::expand_tilde(target);
