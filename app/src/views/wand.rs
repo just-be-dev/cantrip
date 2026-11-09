@@ -275,6 +275,11 @@ impl Wand {
         Some(layer)
     }
 
+    /// How much of the field's placeholder shows (0…1): it waits for deleted text to fade.
+    pub fn placeholder_alpha(&self) -> f32 {
+        self.spells.placeholder(self.now)
+    }
+
     /// Colours for the query's characters: hidden while their spark flies, then glowing.
     pub fn spans(&self, query: &str, p: &Palette) -> Vec<Span> {
         self.spells.spans(self.now, query, p)

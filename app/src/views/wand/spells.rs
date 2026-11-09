@@ -20,6 +20,9 @@ pub fn query_style() -> TextStyle {
 const HEAT: f32 = 0.5;
 /// A deleted character's ghost fades over this long.
 const FADE: f32 = 0.4;
+/// When the query is emptied, the placeholder fades in over this window (seconds after the
+/// deletion), as the deleted text's ghost fades out of the way.
+const PLACEHOLDER_IN: (f32, f32) = (0.3, 0.55);
 /// Seconds between the characters of one edit appearing (a paste writes itself out).
 const STAGGER: f32 = 0.03;
 const TRAIL: usize = 6;
@@ -53,6 +56,8 @@ pub struct Spells {
     glyphs: Vec<Glyphs>,
     ghosts: Vec<Ghost>,
     seed: u32,
+    /// When a deletion emptied the query: the placeholder waits for the ghost.
+    cleared: Option<f64>,
 }
 
 /// What the wand should do about an edit, once it's stamped.
@@ -124,6 +129,9 @@ impl Spells {
             if g.born.is_none() {
                 let from = [g.x + g.width / 2.0, ROW_MID];
                 g.born = Some((t, tip));
+                if query.is_empty() {
+                    self.cleared = Some(t);
+                }
                 cues.push(Stamped::Erased {
                     delay: flight(from, tip) + 0.04,
                     all: query.is_empty(),
@@ -139,16 +147,37 @@ impl Spells {
             g.born
                 .is_none_or(|(b, _)| ((t - b) as f32) < FADE.max(dust_end(g)))
         });
+        if !query.is_empty()
+            || self
+                .cleared
+                .is_some_and(|c| ((t - c) as f32) >= PLACEHOLDER_IN.1)
+        {
+            self.cleared = None;
+        }
         cues
     }
 
     pub fn active(&self) -> bool {
-        !self.glyphs.is_empty() || !self.ghosts.is_empty()
+        !self.glyphs.is_empty() || !self.ghosts.is_empty() || self.cleared.is_some()
     }
 
     pub fn clear(&mut self) {
         self.glyphs.clear();
         self.ghosts.clear();
+        self.cleared = None;
+    }
+
+    /// How much of the placeholder shows at `t` (0…1): none while deleted text is still
+    /// fading where it would be, then fading in.
+    pub fn placeholder(&self, t: f64) -> f32 {
+        if self.ghosts.iter().any(|g| g.born.is_none()) {
+            // Deleted since this frame's poll: its ghost hasn't even started.
+            return 0.0;
+        }
+        match self.cleared {
+            Some(c) => smoothstep(PLACEHOLDER_IN.0, PLACEHOLDER_IN.1, (t - c) as f32),
+            None => 1.0,
+        }
     }
 
     /// Colours for the field's characters at `t`: hidden until their spark lands, then hot,

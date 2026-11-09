@@ -575,3 +575,33 @@ fn opening_the_wand_comes_first_and_casts_the_bar() {
         "the wand is home in the search row by 0.6 s"
     );
 }
+
+/// Deleting the last of the query, its ghost fades where it stood; the placeholder waits for it
+/// instead of showing through, then fades in.
+#[test]
+fn the_placeholder_waits_for_deleted_text_to_fade() {
+    let mut rt = runtime(fixtures::root);
+    rt.poll = crate::spec().poll;
+    settle(&mut rt);
+    type_text(&mut rt, "hi");
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    let alpha = |rt: &Runtime<Cantrip>| rt.state.wand.placeholder_alpha();
+    assert_eq!(alpha(&rt), 1.0);
+    for _ in 0..2 {
+        rt.key(Key::Backspace.into());
+    }
+    // The edits land in the next frame, after its poll: the ghost hasn't started fading yet.
+    rt.frame(1.0 / 60.0);
+    assert_eq!(rt.state.field.text, "");
+    assert_eq!(alpha(&rt), 0.0, "not even for the frame the edit lands in");
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+        assert!(alpha(&rt) < 0.05, "hidden while the ghost fades");
+    }
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(alpha(&rt), 1.0, "then it's back");
+}

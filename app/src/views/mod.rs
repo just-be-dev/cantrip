@@ -320,7 +320,15 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
         .color(p.text)
         .spans(spans)
         .caret(p.magenta, p.violet.alpha(0.45))
-        .placeholder(s.placeholder(), p.faint)
+        // When deleting empties the query, the placeholder waits for the text to fade.
+        .placeholder(
+            s.placeholder(),
+            if s.session.is_none() {
+                p.faint.alpha(p.faint.a * s.wand.placeholder_alpha())
+            } else {
+                p.faint
+            },
+        )
         .on_edit(|s: &mut Cantrip| &mut s.field)
         .on_input_change(|s: &mut Cantrip, tx| {
             let text = s.field.text.clone();
