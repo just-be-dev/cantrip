@@ -139,6 +139,12 @@ impl Intro {
     pub fn hud(self) -> Sequence {
         self.at(POP, 0.0)
     }
+    /// The selection highlight rises in with the first rows. Its spec must not depend on which
+    /// row is selected: a changed spec replays the sequence, so the highlight would vanish and
+    /// fade back in on every move instead of gliding.
+    pub fn highlight(self) -> Sequence {
+        self.row(0)
+    }
     pub fn footer(self) -> Sequence {
         self.at(FADE, 0.22)
     }

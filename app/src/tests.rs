@@ -218,6 +218,30 @@ fn closing_disperses_before_the_window_hides_and_reopening_mid_way_plays_the_int
 }
 
 #[test]
+fn the_selection_still_glides_after_an_opening() {
+    let mut rt = runtime(fixtures::root);
+    rt.update(|s, _| s.hide_panel());
+    rt.update(|s, _| s.show_panel());
+    rt.update(|s, _| s.focus_changed(true));
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    let pill = |rt: &Runtime<Cantrip>| rt.presented("selection").unwrap();
+    let start = pill(&rt).0[1];
+    rt.key(Key::Down.into());
+    for _ in 0..5 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (mid, opacity) = (pill(&rt).0[1], pill(&rt).1);
+    assert!(opacity > 0.99, "the highlight stays lit while it moves, not replaying its entrance: {opacity}");
+    for _ in 0..90 {
+        rt.frame(1.0 / 60.0);
+    }
+    let end = pill(&rt).0[1];
+    assert!(start < mid && mid < end, "it glides: {start} → {mid} → {end}");
+}
+
+#[test]
 fn a_list_that_filters_in_the_spell_gets_each_query() {
     let mut rt = runtime(fixtures::list);
     let WireView::List {

@@ -406,7 +406,7 @@ fn results(s: &Cantrip, look: Look) -> El {
             col()
                 .w_full()
                 .padding(LIST_PAD)
-                .child(play(highlight, look.intro.filter(|_| s.intro_rows).map(|intro| intro.row(selection.min(intro::STAGGERED_ROWS)))))
+                .child(play(highlight, look.intro.filter(|_| s.intro_rows).map(Intro::highlight)))
                 .child(list),
         )
 }

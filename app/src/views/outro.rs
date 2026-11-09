@@ -16,15 +16,26 @@ pub const OUTRO: Duration = Duration::from_millis(520);
 const GLASS: &[Beat] = &[
     Beat::new(0.0),
     Beat::new(0.1).scale(1.012).easing(Easing::EASE_OUT),
-    Beat::new(0.36).opacity(0.0).scale(1.045).easing(Easing::EASE_IN),
+    Beat::new(0.36)
+        .opacity(0.0)
+        .scale(1.045)
+        .easing(Easing::EASE_IN),
 ];
 /// A mote's layer: it flickers on as the glass goes, holds, then drifts out to `reach` and fades.
 const fn drift(reach: f32) -> [Beat; 4] {
     [
         Beat::new(0.0).opacity(0.0),
-        Beat::new(0.07).opacity(1.0).scale(1.0 + (reach - 1.0) * 0.15).easing(Easing::EASE_OUT),
-        Beat::new(0.24).opacity(0.9).scale(1.0 + (reach - 1.0) * 0.55),
-        Beat::new(0.46).opacity(0.0).scale(reach).easing(Easing::EASE_OUT),
+        Beat::new(0.07)
+            .opacity(1.0)
+            .scale(1.0 + (reach - 1.0) * 0.15)
+            .easing(Easing::EASE_OUT),
+        Beat::new(0.24)
+            .opacity(0.9)
+            .scale(1.0 + (reach - 1.0) * 0.55),
+        Beat::new(0.46)
+            .opacity(0.0)
+            .scale(reach)
+            .easing(Easing::EASE_OUT),
     ]
 }
 const MOTES: usize = 72;
@@ -62,11 +73,21 @@ impl Outro {
     /// `size` points.
     pub fn dust(self, x: f32, y: f32, size: (f32, f32), p: Palette) -> El {
         let (w, h) = size;
-        let mut layer = el().key(format!("dust-{}", self.n)).a11y_hidden().inert().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).raise();
+        let mut layer = el()
+            .key(format!("dust-{}", self.n))
+            .a11y_hidden()
+            .inert()
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .raise();
         for i in 0..MOTES {
             let (mx, my) = (noise(i, 1) * w, noise(i, 2) * h);
             let dot = 2.2 + noise(i, 3) * 3.6;
-            let color = [p.magenta.mix(Color::WHITE, 0.2), p.violet.mix(Color::WHITE, 0.45), Color::WHITE, p.cyan.mix(Color::WHITE, 0.3)][i % 4];
+            let color = [
+                p.magenta.mix(Color::WHITE, 0.2),
+                p.violet.mix(Color::WHITE, 0.45),
+                Color::WHITE,
+                p.cyan.mix(Color::WHITE, 0.3),
+            ][i % 4];
             // How far it travels: its layer's end scale, about a point under the panel.
             let drift = [NEAR, MID, FAR][(noise(i, 4) * 2.99) as usize];
             let mote = el()
@@ -74,7 +95,14 @@ impl Outro {
                 .size(dot, dot)
                 .radius(dot / 2.0)
                 .fill(color)
-                .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 6.0 + dot * 2.0, spread: 0.5, color: color.alpha(0.85), inset: false });
+                .box_shadow(Shadow {
+                    x: 0.0,
+                    y: 0.0,
+                    blur: 6.0 + dot * 2.0,
+                    spread: 0.5,
+                    color: color.alpha(0.85),
+                    inset: false,
+                });
             layer = layer.child(
                 el().absolute(x, y)
                     .size(w, h)
