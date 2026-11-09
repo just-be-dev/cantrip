@@ -10,9 +10,8 @@ pub mod wand;
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use rune::{
-    ScrollPos, Sequence,
-    Color, Cx, Cycle, El, ScrollSpec, Shadow, Spring, SystemMaterial, TextStyle, Transition, Tx,
-    Vec2, col, el, row, spacer, text, text_input,
+    Color, Cx, Cycle, El, ScrollPos, ScrollSpec, Sequence, Shadow, Spring, SystemMaterial,
+    TextStyle, Transition, Tx, Vec2, col, el, row, spacer, text, text_input,
 };
 use rune_kit::markdown::{Markdown, MarkdownStyle};
 
@@ -52,7 +51,9 @@ pub const RESULTS: &str = "results";
 
 /// Where row `index` sits in the results' content, top and bottom, in points.
 pub fn row_span(index: usize, header: bool) -> (f32, f32) {
-    let top = LIST_PAD + if header { SECTION_H + ROW_GAP } else { 0.0 } + index as f32 * (ROW_H + ROW_GAP);
+    let top = LIST_PAD
+        + if header { SECTION_H + ROW_GAP } else { 0.0 }
+        + index as f32 * (ROW_H + ROW_GAP);
     (top, top + ROW_H)
 }
 
@@ -74,7 +75,12 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         intro: Intro::new(s.intro).filter(|_| s.revealed),
     };
     let p = look.p;
-    let mut root = el().key("root").w_full().h_full().padding(MARGIN).child(panel(s, look));
+    let mut root = el()
+        .key("root")
+        .w_full()
+        .h_full()
+        .padding(MARGIN)
+        .child(panel(s, look));
     if let Some(intro) = look.intro {
         // Thrown from the wand's orb: 16 pt in, centred in the 64 pt search row.
         root = root.child(intro.burst(MARGIN + 16.0 + 17.0, MARGIN + 32.0, p));
@@ -105,7 +111,6 @@ fn panel(s: &Cantrip, look: Look) -> El {
             color: p.violet.alpha(0.16),
             inset: true,
         })
-
         // The search field keeps the keyboard whatever is clicked (rows, actions, back).
         .preserve_focus_on_press(true)
         .child(aurora(look))
@@ -136,8 +141,22 @@ fn panel(s: &Cantrip, look: Look) -> El {
         .radius(RADIUS)
         .continuous_corners()
         // The window draws no shadow of its own (it's larger than the panel): this is it.
-        .box_shadow(Shadow { x: 0.0, y: 18.0, blur: 48.0, spread: -6.0, color: Color::BLACK.alpha(0.55), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 40.0, spread: -8.0, color: p.violet.alpha(0.3), inset: false })
+        .box_shadow(Shadow {
+            x: 0.0,
+            y: 18.0,
+            blur: 48.0,
+            spread: -6.0,
+            color: Color::BLACK.alpha(0.55),
+            inset: false,
+        })
+        .box_shadow(Shadow {
+            x: 0.0,
+            y: 0.0,
+            blur: 40.0,
+            spread: -8.0,
+            color: p.violet.alpha(0.3),
+            inset: false,
+        })
         // Dispersing, the glass goes soft as it fades.
         .blur(if s.closing { 9.0 } else { 0.0 })
         .child(panel);
@@ -162,7 +181,9 @@ fn aurora(look: Look) -> El {
     let p = look.p;
     let pool = |i: usize, center: [f32; 2], radius: [f32; 2], color: Color, strength: f32| {
         // Each pool blooms out from its own centre.
-        let pool = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).origin(center[0], center[1]);
+        let pool = el()
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .origin(center[0], center[1]);
         play(pool, look.intro.map(|intro| intro.bloom(i)))
             .a11y_hidden()
             .radial_gradient(
@@ -239,7 +260,8 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
                 look.scale,
             ))
     } else {
-        play(orb(34.0, look).key("wand"), look.intro.map(Intro::orb)).child(s.wand.view(34.0, look.scale))
+        play(orb(34.0, look).key("wand"), look.intro.map(Intro::orb))
+            .child(s.wand.view(34.0, look.scale))
     };
     let field = text_input(&s.field, font(21.0, 400.0).lh(28.0).tracking(-0.2))
         .key("query")
@@ -363,7 +385,10 @@ fn results(s: &Cantrip, look: Look) -> El {
         );
     }
     for (i, r) in rows.iter().enumerate() {
-        let rise = look.intro.filter(|_| s.intro_rows && i < intro::STAGGERED_ROWS).map(|intro| intro.row(i));
+        let rise = look
+            .intro
+            .filter(|_| s.intro_rows && i < intro::STAGGERED_ROWS)
+            .map(|intro| intro.row(i));
         list = list.child(play(row_view(r, i, i == selection, look), rise));
     }
     // The selection is one element that glides from row to row, under them and outside the
@@ -407,7 +432,13 @@ fn results(s: &Cantrip, look: Look) -> El {
     col()
         .key(RESULTS)
         // Where the list is scrolled, for keeping the selection in view (`reveal_selection`).
-        .on_scroll_offset(move |at: ScrollPos| watch.set(ScrollWatch { offset: at.offset[1], viewport: at.viewport[1], max: at.max[1] }))
+        .on_scroll_offset(move |at: ScrollPos| {
+            watch.set(ScrollWatch {
+                offset: at.offset[1],
+                viewport: at.viewport[1],
+                max: at.max[1],
+            })
+        })
         .w_full()
         .scroll(ScrollSpec {
             stick_bottom: false,
@@ -416,7 +447,10 @@ fn results(s: &Cantrip, look: Look) -> El {
             col()
                 .w_full()
                 .padding(LIST_PAD)
-                .child(play(highlight, look.intro.filter(|_| s.intro_rows).map(Intro::highlight)))
+                .child(play(
+                    highlight,
+                    look.intro.filter(|_| s.intro_rows).map(Intro::highlight),
+                ))
                 .child(list),
         )
 }

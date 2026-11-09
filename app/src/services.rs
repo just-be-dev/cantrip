@@ -73,7 +73,9 @@ impl Services {
 
     /// Hide the window once the exit has played, if it's still closing then.
     pub fn hide_panel_after(&mut self, delay: Duration, outro: u64) {
-        let Some(panel) = self.panel.clone() else { return self.hide_panel() };
+        let Some(panel) = self.panel.clone() else {
+            return self.hide_panel();
+        };
         std::thread::spawn(move || {
             std::thread::sleep(delay);
             panel.update(move |s, _| s.finish_close(outro));

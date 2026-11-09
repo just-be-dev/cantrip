@@ -786,7 +786,8 @@ impl Cantrip {
             // Disperse first; the window hides when that's done (`finish_close`).
             self.closing = true;
             self.outro += 1;
-            self.services.hide_panel_after(crate::views::outro::OUTRO, self.outro);
+            self.services
+                .hide_panel_after(crate::views::outro::OUTRO, self.outro);
         } else {
             self.services.hide_panel();
         }
@@ -862,13 +863,24 @@ impl Cantrip {
     pub fn animate_wand(&mut self, t: f64, tx: &mut Tx) {
         let shown = self.session.is_none() && (self.visible && self.revealed || self.closing);
         let live = self.services.live;
-        self.wand.frame(t, shown, self.intro, || live && crate::platform::reduce_motion(), tx);
+        self.wand.frame(
+            t,
+            shown,
+            self.intro,
+            || live && crate::platform::reduce_motion(),
+            tx,
+        );
     }
 
     /// Timers: toasts and the HUD go away by themselves. True when something visible changed.
     pub fn tick(&mut self, now: Instant) -> bool {
         // Shown but the keyboard never arrived (another app kept it): play the intro anyway.
-        if self.visible && !self.revealed && self.shown_at.is_some_and(|at| now.duration_since(at) > REVEAL_FALLBACK) {
+        if self.visible
+            && !self.revealed
+            && self
+                .shown_at
+                .is_some_and(|at| now.duration_since(at) > REVEAL_FALLBACK)
+        {
             self.reveal();
             return true;
         }

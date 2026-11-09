@@ -138,9 +138,13 @@ fn enter_casts_a_spell_and_escape_walks_back_out() {
 fn the_selection_glides_from_row_to_row() {
     let mut rt = runtime(fixtures::root);
     let y = |rt: &Runtime<Cantrip>| rt.presented("selection").unwrap().0[1];
-    let row_y = |rt: &Runtime<Cantrip>, i: usize| rt.presented(&crate::store::row_key(i)).unwrap().0[1];
+    let row_y =
+        |rt: &Runtime<Cantrip>, i: usize| rt.presented(&crate::store::row_key(i)).unwrap().0[1];
     let start = y(&rt);
-    assert!((start - row_y(&rt, 0)).abs() < 0.5, "it starts under the first row");
+    assert!(
+        (start - row_y(&rt, 0)).abs() < 0.5,
+        "it starts under the first row"
+    );
     rt.key(Key::Down.into());
     rt.key(Key::Down.into());
     for _ in 0..6 {
@@ -151,15 +155,24 @@ fn the_selection_glides_from_row_to_row() {
         rt.frame(1.0 / 60.0);
     }
     let end = y(&rt);
-    assert!(start < mid && mid < end, "it travels: {start} → {mid} → {end}");
-    assert!((end - row_y(&rt, 2)).abs() < 0.5, "and lands under the third row");
+    assert!(
+        start < mid && mid < end,
+        "it travels: {start} → {mid} → {end}"
+    );
+    assert!(
+        (end - row_y(&rt, 2)).abs() < 0.5,
+        "and lands under the third row"
+    );
 }
 
 #[test]
 fn opening_plays_the_intro_from_a_closed_pose() {
     let mut rt = runtime(fixtures::root);
     let opacity = |rt: &Runtime<Cantrip>| rt.presented("panel").map_or(0.0, |p| p.1);
-    assert!((opacity(&rt) - 1.0).abs() < 0.01, "a fresh launch shows at rest");
+    assert!(
+        (opacity(&rt) - 1.0).abs() < 0.01,
+        "a fresh launch shows at rest"
+    );
     rt.update(|s, _| s.hide_panel());
     settle(&mut rt);
     assert!(opacity(&rt) < 0.01, "hidden, it holds its closed pose");
@@ -186,7 +199,11 @@ fn opening_plays_the_intro_from_a_closed_pose() {
     for _ in 0..4 {
         rt.frame(1.0 / 60.0);
     }
-    assert!(opacity(&rt) < 0.95, "a second opening plays again: {}", opacity(&rt));
+    assert!(
+        opacity(&rt) < 0.95,
+        "a second opening plays again: {}",
+        opacity(&rt)
+    );
 }
 
 #[test]
@@ -210,7 +227,10 @@ fn closing_disperses_before_the_window_hides_and_reopening_mid_way_plays_the_int
     rt.update(|s, _| s.hide_panel());
     assert!(rt.state.closing);
     rt.update(|s, _| s.show_panel());
-    assert!(!rt.state.closing && rt.state.visible && rt.state.revealed, "reopened mid-exit, it's back");
+    assert!(
+        !rt.state.closing && rt.state.visible && rt.state.revealed,
+        "reopened mid-exit, it's back"
+    );
     let intro = rt.state.intro;
     rt.update(|s, _| s.finish_close(2));
     assert!(rt.state.visible, "and the late hide does nothing");
@@ -233,25 +253,33 @@ fn the_selection_still_glides_after_an_opening() {
         rt.frame(1.0 / 60.0);
     }
     let (mid, opacity) = (pill(&rt).0[1], pill(&rt).1);
-    assert!(opacity > 0.99, "the highlight stays lit while it moves, not replaying its entrance: {opacity}");
+    assert!(
+        opacity > 0.99,
+        "the highlight stays lit while it moves, not replaying its entrance: {opacity}"
+    );
     for _ in 0..90 {
         rt.frame(1.0 / 60.0);
     }
     let end = pill(&rt).0[1];
-    assert!(start < mid && mid < end, "it glides: {start} → {mid} → {end}");
+    assert!(
+        start < mid && mid < end,
+        "it glides: {start} → {mid} → {end}"
+    );
 }
 
 #[test]
 fn moving_past_the_bottom_scrolls_smoothly_with_the_selection() {
     let mut rt = runtime(fixtures::root);
     let y = |rt: &Runtime<Cantrip>, key: &str| rt.presented(key).map(|p| p.0[1]);
-    let viewport_bottom = |rt: &Runtime<Cantrip>| rt.presented("results").map(|p| p.0[1] + p.0[3]).unwrap();
+    let viewport_bottom =
+        |rt: &Runtime<Cantrip>| rt.presented("results").map(|p| p.0[1] + p.0[3]).unwrap();
     let mut scrolled = false;
     for _ in 0..12 {
         let before = rt.state.scroll.get().offset;
         rt.key(Key::Down.into());
         let row = crate::store::row_key(rt.state.selection());
-        let (mut last_pill, mut last_row, mut worst) = (y(&rt, "selection").unwrap(), y(&rt, &row), 0.0f32);
+        let (mut last_pill, mut last_row, mut worst) =
+            (y(&rt, "selection").unwrap(), y(&rt, &row), 0.0f32);
         for _ in 0..60 {
             rt.frame(1.0 / 60.0);
             let (pill, now_row) = (y(&rt, "selection").unwrap(), y(&rt, &row));
@@ -261,9 +289,16 @@ fn moving_past_the_bottom_scrolls_smoothly_with_the_selection() {
             }
             (last_pill, last_row) = (pill, now_row);
         }
-        assert!(worst < 14.0, "row {} moved {worst} pt in one frame: a pop", rt.state.selection());
+        assert!(
+            worst < 14.0,
+            "row {} moved {worst} pt in one frame: a pop",
+            rt.state.selection()
+        );
         let pill = rt.presented("selection").unwrap().0;
-        assert!(pill[1] + pill[3] <= viewport_bottom(&rt) + 0.5, "the selection stays in view");
+        assert!(
+            pill[1] + pill[3] <= viewport_bottom(&rt) + 0.5,
+            "the selection stays in view"
+        );
         scrolled |= rt.state.scroll.get().offset > before + 1.0;
     }
     assert!(scrolled, "the list scrolled to follow the selection");

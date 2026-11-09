@@ -55,20 +55,38 @@ pub struct Wand {
 
 impl Wand {
     pub fn new() -> Wand {
-        Wand { pixels: Pixels::new(), scale: Cell::new(2.0), intro: 0, began: None, still: false, drawn: None }
+        Wand {
+            pixels: Pixels::new(),
+            scale: Cell::new(2.0),
+            intro: 0,
+            began: None,
+            still: false,
+            drawn: None,
+        }
     }
 
     /// The wand, centred on the orb it sits in (`orb` points across).
     pub fn view(&self, orb: f32, scale: f32) -> El {
         self.scale.set(scale);
         let inset = (orb - CANVAS) / 2.0;
-        el().absolute(inset, inset).size(CANVAS, CANVAS).pixels(&self.pixels).inert().a11y_hidden()
+        el().absolute(inset, inset)
+            .size(CANVAS, CANVAS)
+            .pixels(&self.pixels)
+            .inert()
+            .a11y_hidden()
     }
 
     /// Draws the frame at `t` (frame-clock seconds) if one is due. `shown`: the wand is on
     /// screen; `intro` counts openings, and a new one starts a flourish; `still` asks whether
     /// to hold still (Reduce Motion), once per opening.
-    pub fn frame(&mut self, t: f64, shown: bool, intro: u64, still: impl FnOnce() -> bool, tx: &mut Tx) {
+    pub fn frame(
+        &mut self,
+        t: f64,
+        shown: bool,
+        intro: u64,
+        still: impl FnOnce() -> bool,
+        tx: &mut Tx,
+    ) {
         if intro != self.intro {
             self.intro = intro;
             self.began = (intro > 0).then_some(t + DELAY);
@@ -132,7 +150,11 @@ pub fn render(clock: Clock, scale: f32, p: &Palette) -> (u32, Vec<u8>) {
     let focal = PT_PER_UNIT * DISTANCE * scale * SUPERSAMPLE as f32;
     let project = |w: V3, f: f32, side: usize| {
         let z = DISTANCE - w[2];
-        (side as f32 / 2.0 + f * w[0] / z, side as f32 / 2.0 - f * w[1] / z, z)
+        (
+            side as f32 / 2.0 + f * w[0] / z,
+            side as f32 / 2.0 - f * w[1] / z,
+            z,
+        )
     };
     let mesh = &*MESH;
     let verts: Vec<Vert<10>> = mesh
@@ -142,14 +164,37 @@ pub fn render(clock: Clock, scale: f32, p: &Palette) -> (u32, Vec<u8>) {
             let w = pose.place(v.pos);
             let n = pose.rot.apply(v.normal);
             let (x, y, z) = project(w, focal, ss);
-            Vert { x, y, z, attr: [n[0], n[1], n[2], w[0], w[1], w[2], v.pos[1], v.cos, v.sin, v.material as u8 as f32] }
+            Vert {
+                x,
+                y,
+                z,
+                attr: [
+                    n[0],
+                    n[1],
+                    n[2],
+                    w[0],
+                    w[1],
+                    w[2],
+                    v.pos[1],
+                    v.cos,
+                    v.sin,
+                    v.material as u8 as f32,
+                ],
+            }
         })
         .collect();
     let mut canvas = Canvas::new(ss, ss);
     let looks = Looks::new(p);
     let shade = |a: &[f32; 10]| looks.shade(a);
     for t in &mesh.tris {
-        canvas.triangle([&verts[t[0] as usize], &verts[t[1] as usize], &verts[t[2] as usize]], &shade);
+        canvas.triangle(
+            [
+                &verts[t[0] as usize],
+                &verts[t[1] as usize],
+                &verts[t[2] as usize],
+            ],
+            &shade,
+        );
     }
     let mut out = canvas.downsample(SUPERSAMPLE);
 
@@ -188,14 +233,27 @@ impl Pose {
     fn new(turn: f32, swing: f32, scale: f32, star: f32, star_angle: f32) -> Pose {
         // Diagonal like the old symbol, tip to the upper right and leaning out, then turned
         // about the vertical.
-        let rot = M3::z(-FRAC_PI_4 + swing).then(M3::x(TILT)).then(M3::y(turn));
-        Pose { rot, scale, star, star_angle }
+        let rot = M3::z(-FRAC_PI_4 + swing)
+            .then(M3::x(TILT))
+            .then(M3::y(turn));
+        Pose {
+            rot,
+            scale,
+            star,
+            star_angle,
+        }
     }
 
     fn at(clock: Clock) -> Pose {
         match clock {
             Clock::Still => Pose::new(0.0, 0.0, 1.0, 1.0, 0.0),
-            Clock::Rest(t) => Pose::new(ROCK * (TAU * t / ROCK_PERIOD).sin(), 0.0, 1.0, breathe(t), t * 0.6),
+            Clock::Rest(t) => Pose::new(
+                ROCK * (TAU * t / ROCK_PERIOD).sin(),
+                0.0,
+                1.0,
+                breathe(t),
+                t * 0.6,
+            ),
             Clock::Opened(s) => {
                 let s = s.max(0.0);
                 // A full twirl, swinging back past upright and settling; the rock eases in after.
@@ -260,7 +318,8 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
         rgb(p.magenta.mix(Color::WHITE, 0.25)),
         rgb(p.amber),
     ];
-    let color = |i: u32, salt: u32| colors[(hash(i, salt) * colors.len() as f32) as usize % colors.len()];
+    let color =
+        |i: u32, salt: u32| colors[(hash(i, salt) * colors.len() as f32) as usize % colors.len()];
     let mut stars = Vec::new();
     let (now, opened) = match clock {
         Clock::Still => return stars,
@@ -269,7 +328,11 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
     };
     // Where the tip was at time `at` on the same clock.
     let tip = |at: f32| {
-        let pose = Pose::at(if opened { Clock::Opened(at) } else { Clock::Rest(at) });
+        let pose = Pose::at(if opened {
+            Clock::Opened(at)
+        } else {
+            Clock::Rest(at)
+        });
         pose.place(TIP)
     };
 
@@ -285,7 +348,10 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
             }
             let from = tip(born);
             let out = norm(sub(from, OFFSET));
-            let dir = norm(add(out, mul([hash(i, 1) - 0.5, hash(i, 2) - 0.3, hash(i, 3) - 0.5], 1.4)));
+            let dir = norm(add(
+                out,
+                mul([hash(i, 1) - 0.5, hash(i, 2) - 0.3, hash(i, 3) - 0.5], 1.4),
+            ));
             let (speed, damping) = (0.7 + 1.0 * hash(i, 4), 3.0);
             let travel = speed * (1.0 - (-damping * age).exp()) / damping;
             stars.push(Star {
@@ -308,10 +374,19 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
         if !(0.0..1.0).contains(&u) {
             continue;
         }
-        let jitter = mul([hash(id, 1) - 0.5, hash(id, 2) - 0.5, hash(id, 3) - 0.5], 0.14);
-        let drift = mul(norm([hash(id, 4) - 0.3, hash(id, 5) + 0.3, hash(id, 6) - 0.5]), 0.18 + 0.25 * hash(id, 7));
+        let jitter = mul(
+            [hash(id, 1) - 0.5, hash(id, 2) - 0.5, hash(id, 3) - 0.5],
+            0.14,
+        );
+        let drift = mul(
+            norm([hash(id, 4) - 0.3, hash(id, 5) + 0.3, hash(id, 6) - 0.5]),
+            0.18 + 0.25 * hash(id, 7),
+        );
         stars.push(Star {
-            at: add(add(tip(born), jitter), add(mul(drift, age), [0.0, 0.06 * age * age, 0.0])),
+            at: add(
+                add(tip(born), jitter),
+                add(mul(drift, age), [0.0, 0.06 * age * age, 0.0]),
+            ),
             radius: (0.05 + 0.05 * hash(id, 10)) * life_size(u),
             angle: hash(id, 11) * TAU + age * 2.0,
             color: color(id, 8),
@@ -325,9 +400,9 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
 fn life_size(u: f32) -> f32 {
     const KEYS: [(f32, f32); 4] = [(0.0, 0.2), (0.25, 1.0), (0.6, 0.7), (1.0, 0.0)];
     let u = u.clamp(0.0, 1.0);
-    KEYS.windows(2)
-        .find(|w| u <= w[1].0)
-        .map_or(0.0, |w| lerp(w[0].1, w[1].1, (u - w[0].0) / (w[1].0 - w[0].0)))
+    KEYS.windows(2).find(|w| u <= w[1].0).map_or(0.0, |w| {
+        lerp(w[0].1, w[1].1, (u - w[0].0) / (w[1].0 - w[0].0))
+    })
 }
 
 /// A repeatable random number in [0, 1) for particle `i`'s property `salt`.
@@ -356,16 +431,73 @@ enum Material {
 /// the vertical, it's the whole model: a gold pommel and collar, a wrapped grip, a gold band,
 /// a tapering lacquered shaft, a gold ferrule and a glowing tip.
 const PROFILE: &[(Material, &[(f32, f32)])] = &[
-    (Material::Gold, &[
-        (-1.05, 0.0), (-1.04, 0.035), (-1.015, 0.068), (-0.98, 0.086), (-0.945, 0.088),
-        (-0.915, 0.076), (-0.897, 0.062), (-0.887, 0.083), (-0.866, 0.09), (-0.846, 0.083),
-        (-0.835, 0.07),
-    ]),
-    (Material::Grip, &[(-0.835, 0.07), (-0.74, 0.078), (-0.6, 0.082), (-0.47, 0.076), (-0.39, 0.068)]),
-    (Material::Gold, &[(-0.39, 0.068), (-0.385, 0.082), (-0.37, 0.09), (-0.35, 0.09), (-0.335, 0.082), (-0.33, 0.06)]),
-    (Material::Shaft, &[(-0.33, 0.06), (-0.1, 0.054), (0.2, 0.047), (0.5, 0.041), (0.84, 0.035)]),
-    (Material::Gold, &[(0.84, 0.035), (0.845, 0.046), (0.865, 0.05), (0.885, 0.046), (0.89, 0.036)]),
-    (Material::Tip, &[(0.89, 0.036), (0.94, 0.034), (0.98, 0.026), (1.005, 0.014), (1.015, 0.0)]),
+    (
+        Material::Gold,
+        &[
+            (-1.05, 0.0),
+            (-1.04, 0.035),
+            (-1.015, 0.068),
+            (-0.98, 0.086),
+            (-0.945, 0.088),
+            (-0.915, 0.076),
+            (-0.897, 0.062),
+            (-0.887, 0.083),
+            (-0.866, 0.09),
+            (-0.846, 0.083),
+            (-0.835, 0.07),
+        ],
+    ),
+    (
+        Material::Grip,
+        &[
+            (-0.835, 0.07),
+            (-0.74, 0.078),
+            (-0.6, 0.082),
+            (-0.47, 0.076),
+            (-0.39, 0.068),
+        ],
+    ),
+    (
+        Material::Gold,
+        &[
+            (-0.39, 0.068),
+            (-0.385, 0.082),
+            (-0.37, 0.09),
+            (-0.35, 0.09),
+            (-0.335, 0.082),
+            (-0.33, 0.06),
+        ],
+    ),
+    (
+        Material::Shaft,
+        &[
+            (-0.33, 0.06),
+            (-0.1, 0.054),
+            (0.2, 0.047),
+            (0.5, 0.041),
+            (0.84, 0.035),
+        ],
+    ),
+    (
+        Material::Gold,
+        &[
+            (0.84, 0.035),
+            (0.845, 0.046),
+            (0.865, 0.05),
+            (0.885, 0.046),
+            (0.89, 0.036),
+        ],
+    ),
+    (
+        Material::Tip,
+        &[
+            (0.89, 0.036),
+            (0.94, 0.034),
+            (0.98, 0.026),
+            (1.005, 0.014),
+            (1.015, 0.0),
+        ],
+    ),
 ];
 const SEGMENTS: usize = 24;
 /// Widens the outline: thin enough to read as a wand, thick enough to read at 30 points.
@@ -386,7 +518,10 @@ struct Mesh {
 }
 
 static MESH: LazyLock<Mesh> = LazyLock::new(|| {
-    let mut mesh = Mesh { verts: Vec::new(), tris: Vec::new() };
+    let mut mesh = Mesh {
+        verts: Vec::new(),
+        tris: Vec::new(),
+    };
     for &(material, run) in PROFILE {
         let base = mesh.verts.len() as u32;
         for (i, &(y, r)) in run.iter().enumerate() {
@@ -463,7 +598,13 @@ impl Looks {
                 // Polished metal: a fake sky in the reflection does most of the work.
                 let up = sub(mul(n, 2.0 * dot(n, v)), v)[1];
                 let lit = 0.12 + 0.6 * diffuse + 0.5 * smoothstep(-0.2, 0.8, up);
-                add(add(mul(self.gold, lit), mul(mix(self.gold, white, 0.6), 1.2 * shine(40))), mul(self.magenta, 0.3 * rim))
+                add(
+                    add(
+                        mul(self.gold, lit),
+                        mul(mix(self.gold, white, 0.6), 1.2 * shine(40)),
+                    ),
+                    mul(self.magenta, 0.3 * rim),
+                )
             }
             1 => {
                 // A ribbon wound twice around the grip.
@@ -471,18 +612,34 @@ impl Looks {
                 let s = turn - turn.floor();
                 let ribbon = smoothstep(0.0, 0.06, s) * (1.0 - smoothstep(0.42, 0.48, s));
                 let base = mix(self.grip, self.wrap, ribbon);
-                let lit = add(mul(base, 0.18 + 0.85 * diffuse), mul(self.violet, 0.12 * fill));
-                add(add(lit, mul(white, 0.18 * shine(18))), mul(self.violet, 0.7 * rim))
+                let lit = add(
+                    mul(base, 0.18 + 0.85 * diffuse),
+                    mul(self.violet, 0.12 * fill),
+                );
+                add(
+                    add(lit, mul(white, 0.18 * shine(18))),
+                    mul(self.violet, 0.7 * rim),
+                )
             }
             2 => {
                 // Lacquer that glows warmer toward the tip, as if charged.
-                let lit = add(mul(self.shaft, 0.2 + 0.9 * diffuse), mul(self.violet, 0.15 * fill));
-                let edge = mul(mix(self.violet, self.magenta, smoothstep(-0.3, 0.8, y)), 0.9 * rim);
+                let lit = add(
+                    mul(self.shaft, 0.2 + 0.9 * diffuse),
+                    mul(self.violet, 0.15 * fill),
+                );
+                let edge = mul(
+                    mix(self.violet, self.magenta, smoothstep(-0.3, 0.8, y)),
+                    0.9 * rim,
+                );
                 let charge = mul(self.magenta, 0.22 * smoothstep(0.45, 0.9, y));
                 add(add(add(lit, mul(white, 0.65 * shine(60))), edge), charge)
             }
             _ => {
-                let glow = mix(white, mul(mix(self.violet, self.magenta, 0.5), 1.1), 0.25 + 0.6 * rim);
+                let glow = mix(
+                    white,
+                    mul(mix(self.violet, self.magenta, 0.5), 1.1),
+                    0.25 + 0.6 * rim,
+                );
                 mul(glow, 1.15)
             }
         };
@@ -531,7 +688,12 @@ mod tests {
     #[test]
     fn the_wand_fills_part_of_its_square() {
         let p = super::palette::arcane();
-        for clock in [Clock::Still, Clock::Rest(3.0), Clock::Opened(0.3), Clock::Opened(2.0)] {
+        for clock in [
+            Clock::Still,
+            Clock::Rest(3.0),
+            Clock::Opened(0.3),
+            Clock::Opened(2.0),
+        ] {
             let (side, rgba) = render(clock, 2.0, &p);
             let covered = opaque(&rgba) as f32 / (side * side) as f32;
             assert!((0.01..0.1).contains(&covered), "{clock:?}: {covered}");
@@ -541,7 +703,13 @@ mod tests {
     #[test]
     fn the_burst_sparkles_then_settles() {
         let p = super::palette::arcane();
-        let lit = |clock| render(clock, 2.0, &p).1.chunks(4).filter(|px| px[3] > 0).count();
+        let lit = |clock| {
+            render(clock, 2.0, &p)
+                .1
+                .chunks(4)
+                .filter(|px| px[3] > 0)
+                .count()
+        };
         // Mid-flourish there's far more sparkle than once it has burnt out.
         assert!(lit(Clock::Opened(0.45)) > lit(Clock::Opened(3.0)) + 100);
         // Reduce Motion: no sparkles at all, just the wand and its tip star.

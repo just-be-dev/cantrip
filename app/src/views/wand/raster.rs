@@ -73,12 +73,23 @@ pub struct Canvas {
 
 impl Canvas {
     pub fn new(w: usize, h: usize) -> Canvas {
-        Canvas { w, h, color: vec![[0.0; 4]; w * h], depth: vec![f32::INFINITY; w * h] }
+        Canvas {
+            w,
+            h,
+            color: vec![[0.0; 4]; w * h],
+            depth: vec![f32::INFINITY; w * h],
+        }
     }
 
     /// Fills a triangle (either winding), shading each pixel nearer than what's there.
-    pub fn triangle<const A: usize>(&mut self, v: [&Vert<A>; 3], shade: &impl Fn(&[f32; A]) -> [f32; 4]) {
-        let edge = |a: &Vert<A>, b: &Vert<A>, x: f32, y: f32| (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+    pub fn triangle<const A: usize>(
+        &mut self,
+        v: [&Vert<A>; 3],
+        shade: &impl Fn(&[f32; A]) -> [f32; 4],
+    ) {
+        let edge = |a: &Vert<A>, b: &Vert<A>, x: f32, y: f32| {
+            (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)
+        };
         let area = edge(v[0], v[1], v[2].x, v[2].y);
         if area.abs() < 1e-6 || v.iter().any(|v| v.z <= 0.0) {
             return;
@@ -149,7 +160,8 @@ impl Canvas {
         if radius < 0.3 || alpha <= 0.0 {
             return;
         }
-        let at = |x: f32, y: f32| (y as usize).min(self.h - 1) * self.w + (x as usize).min(self.w - 1);
+        let at =
+            |x: f32, y: f32| (y as usize).min(self.h - 1) * self.w + (x as usize).min(self.w - 1);
         if cx >= 0.0 && cy >= 0.0 && self.depth[at(cx, cy)] < z {
             return;
         }
@@ -192,7 +204,11 @@ impl Canvas {
     pub fn encode(&self) -> Vec<u8> {
         let enc = |v: f32| {
             let v = v.clamp(0.0, 1.0);
-            let s = if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+            let s = if v <= 0.003_130_8 {
+                v * 12.92
+            } else {
+                1.055 * v.powf(1.0 / 2.4) - 0.055
+            };
             (s * 255.0 + 0.5) as u8
         };
         let mut out = Vec::with_capacity(self.w * self.h * 4);
@@ -202,7 +218,12 @@ impl Canvas {
                 out.extend_from_slice(&[0; 4]);
                 continue;
             }
-            out.extend_from_slice(&[enc(c[0] / a), enc(c[1] / a), enc(c[2] / a), (a * 255.0 + 0.5) as u8]);
+            out.extend_from_slice(&[
+                enc(c[0] / a),
+                enc(c[1] / a),
+                enc(c[2] / a),
+                (a * 255.0 + 0.5) as u8,
+            ]);
         }
         out
     }

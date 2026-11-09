@@ -25,7 +25,9 @@ mod views;
 
 use std::time::{Duration, Instant};
 
-use rune::{App, AppHandle, AppSpec, FrameOutcome, KeyEvent, OverlaySpec, ScreenEdge, Tx, WindowOptions};
+use rune::{
+    App, AppHandle, AppSpec, FrameOutcome, KeyEvent, OverlaySpec, ScreenEdge, Tx, WindowOptions,
+};
 
 use crate::config::Config;
 use crate::platform::statusbar::{DaemonBar, DaemonEvent, MainCommand, MainItem, MainMenuSpec};
@@ -66,9 +68,7 @@ fn main() {
     let mut app = App::new(spec())
         .keep_running()
         .accessory()
-        .configured_options(
-            WindowOptions::launcher_panel().macos(|native| native.shadow(false)),
-        )
+        .configured_options(WindowOptions::launcher_panel().macos(|native| native.shadow(false)))
         .on_focus(|s, focused, _| s.focus_changed(focused))
         .on_quit(|s, _| {
             if let Some(host) = &mut s.services.host {
@@ -108,7 +108,9 @@ fn main() {
     // The first frame drawn after the panel has the keyboard is the first one anyone sees:
     // start the intro there.
     .on_frame_encoded(move |frame| {
-        if frame.outcome() == FrameOutcome::Drawn && store::AWAITING_FRAME.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        if frame.outcome() == FrameOutcome::Drawn
+            && store::AWAITING_FRAME.swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
             revealer.update(|s, _| {
                 if s.visible && !s.revealed {
                     s.reveal();
