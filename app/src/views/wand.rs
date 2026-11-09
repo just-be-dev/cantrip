@@ -1,7 +1,7 @@
 //! The wand in the search bar's orb: a small 3D model, rendered on the CPU into `Pixels` on
 //! the frame clock. Each opening it twirls in and throws star sparkles from its tip as the
-//! orb pops (`intro.rs`); then it idles, rocking slowly with its tip star breathing and a few
-//! sparkles drifting off it. Every frame is a pure function of time, so headless renders are
+//! orb would pop (`intro.rs`); then it idles, rocking slowly with its tip star breathing and a
+//! few sparkles drifting off it, while three stars orbit it. Every frame is a pure function of time, so headless renders are
 //! repeatable. Reduce Motion gets one still frame. Nothing draws while the wand is off screen.
 
 mod raster;
@@ -301,6 +301,12 @@ const BURST: u32 = 22;
 /// One twinkle drifts off the tip this often, each living up to `TWINKLE_LIFE`.
 const TWINKLE_EVERY: f32 = 0.17;
 const TWINKLE_LIFE: f32 = 1.4;
+/// Stars circling the wand's axis, as (height on the wand, distance from it, size): a loose
+/// spiral from the grip up to the tip. They go round once every `ORBIT` seconds, a third of a
+/// turn apart, and spiral out from the shaft as the wand twirls in.
+const ORBITERS: [(f32, f32, f32); 3] =
+    [(-0.45, 0.62, 0.17), (0.12, 0.74, 0.14), (0.62, 0.56, 0.13)];
+const ORBIT: f32 = 3.6;
 
 struct Star {
     at: V3,
@@ -320,7 +326,7 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
     ];
     let color =
         |i: u32, salt: u32| colors[(hash(i, salt) * colors.len() as f32) as usize % colors.len()];
-    let mut stars = Vec::new();
+    let mut stars = orbiters(clock, [colors[3], colors[0], colors[1]]);
     let (now, opened) = match clock {
         Clock::Still => return stars,
         Clock::Rest(t) => (t, false),
@@ -394,6 +400,41 @@ fn sparkles(clock: Clock, p: &Palette) -> Vec<Star> {
         });
     }
     stars
+}
+
+/// The stars in orbit. They turn with the wand, pass behind it (hidden where it covers them,
+/// dimmer while they're at the back), and hold still for Reduce Motion.
+fn orbiters(clock: Clock, colors: [V3; 3]) -> Vec<Star> {
+    let pose = Pose::at(clock);
+    let (now, grow) = match clock {
+        Clock::Still => (0.0, 1.0),
+        Clock::Rest(t) => (t, 1.0),
+        Clock::Opened(s) => (s, ease_out((s - 0.25) / 0.55)),
+    };
+    if grow <= 0.0 {
+        return Vec::new();
+    }
+    let middle = pose.place([0.0; 3])[2];
+    ORBITERS
+        .iter()
+        .zip(colors)
+        .enumerate()
+        .map(|(i, (&(height, reach, size), color))| {
+            let phase = i as f32 / ORBITERS.len() as f32;
+            let turn = TAU * (now / ORBIT + phase);
+            let at = pose.place([reach * grow * turn.cos(), height, reach * grow * turn.sin()]);
+            // 0 at the front of the orbit, 1 at the back.
+            let back = ((middle - at[2]) / (reach * pose.scale) * 0.5 + 0.5).clamp(0.0, 1.0);
+            let twinkle = 1.0 + 0.15 * (TAU * now / 1.3 + i as f32 * 2.1).sin();
+            Star {
+                at,
+                radius: size * grow * twinkle,
+                angle: now * 0.9 + phase * TAU,
+                color,
+                alpha: 1.0 - 0.5 * back,
+            }
+        })
+        .collect()
 }
 
 /// A sparkle's size over its life (0…1): it swells, then winks out.

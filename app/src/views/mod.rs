@@ -218,7 +218,7 @@ fn glow_rule(look: Look) -> El {
 
 // MARK: Search bar
 
-/// The wand (or back button) in a glowing orb.
+/// The back button's glowing orb (and the empty state's).
 fn orb(size: f32, look: Look) -> El {
     let p = look.p;
     el().size(size, size)
@@ -260,8 +260,12 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
                 look.scale,
             ))
     } else {
-        play(orb(34.0, look).key("wand"), look.intro.map(Intro::orb))
-            .child(s.wand.view(34.0, look.scale))
+        // The wand stands on its own, in the orb's place, and pops in as the orb would.
+        play(
+            el().key("wand").size(34.0, 34.0),
+            look.intro.map(Intro::orb),
+        )
+        .child(s.wand.view(34.0, look.scale))
     };
     let field = text_input(&s.field, font(21.0, 400.0).lh(28.0).tracking(-0.2))
         .key("query")
