@@ -1,14 +1,17 @@
-//! The bar's exit: the glass blurs, swells a little and fades, while stardust lifts off it and
-//! drifts up and outward past its edges. The window hides once it's gone (`OUTRO`).
+//! The bar's exit. Arcane: the glass blurs, swells a little and fades, while stardust lifts off
+//! it and drifts up and outward past its edges. Sigil: a binding sigil (a ring of runes round a
+//! seven-pointed star) closes in over the panel while the glass falls into its heart; then it
+//! collapses to a point that flares and goes out. The window hides once it's gone (`OUTRO`).
 //!
 //! A sequence can only scale and fade, so each mote scales about a point below the panel's
 //! centre, far outside itself (`origin` beyond 0..1): scaling carries it up and away. The mote is
 //! a single childless element carrying its own sequence: a fading element with children is
 //! drawn into an offscreen layer of its own, and 72 panel-sized ones a frame made the exit stutter.
 
+use std::f32::consts::{FRAC_PI_2, TAU};
 use std::time::Duration;
 
-use rune::{Beat, Color, Easing, El, Sequence, Shadow, el};
+use rune::{Beat, Color, Easing, El, LineCap, Sequence, Shadow, Shape, canvas, el};
 
 use super::palette::Palette;
 
@@ -117,42 +120,181 @@ impl Outro {
     }
 }
 
-/// Sigil's seal: a ring closes in over the wand as the glass fades, turning to a point.
-const SEAL: &[Beat] = &[
-    Beat::new(0.0).opacity(0.0).scale(2.6),
-    Beat::new(0.24)
-        .opacity(0.9)
-        .scale(1.0)
-        .easing(Easing::EASE_OUT),
-    Beat::new(0.46)
-        .opacity(0.0)
-        .scale(0.08)
-        .easing(Easing::EASE_IN),
-];
-
-impl Outro {
-    /// Sigil's exit, instead of stardust: two fine gold rings close over the wand at (`x`,
-    /// `y`) as the glass goes.
-    pub fn seal(self, x: f32, y: f32, p: Palette) -> El {
-        let ring = |r: f32, alpha: f32| {
-            el().absolute(30.0 - r, 30.0 - r)
-                .size(2.0 * r, 2.0 * r)
-                .radius(r)
-                .border(1.0, p.glow.alpha(alpha))
-        };
-        el().key(format!("seal-{}", self.n))
-            .a11y_hidden()
-            .inert()
-            .pin(Some(x - 30.0), Some(y - 30.0), None, None)
-            .size(60.0, 60.0)
-            .raise()
-            .sequence(self.at(SEAL, 0.06))
-            .child(ring(26.0, 0.85))
-            .child(ring(20.0, 0.45))
-    }
-}
-
 /// Three reaches, near to far (a sequence's beats are static, so the spread comes from a few).
 const NEAR: &[Beat] = &drift(1.2);
 const MID: &[Beat] = &drift(1.42);
 const FAR: &[Beat] = &drift(1.7);
+
+// MARK: Sigil's binding
+
+/// Sigil's glass draws in a breath, then falls into its centre (the shell's origin), fading
+/// as it goes.
+const FALL: &[Beat] = &[
+    Beat::new(0.0),
+    Beat::new(0.07).scale(1.015).easing(Easing::EASE_OUT),
+    Beat::new(0.30)
+        .opacity(0.5)
+        .scale(0.10)
+        .easing(Easing::EASE_IN),
+    Beat::new(0.34)
+        .opacity(0.0)
+        .scale(0.02)
+        .easing(Easing::EASE_IN),
+];
+/// The binding sigil: it closes in over the falling glass, holds, then collapses to a point.
+const BIND: &[Beat] = &[
+    Beat::new(0.0).opacity(0.0).scale(2.2),
+    Beat::new(0.26)
+        .opacity(1.0)
+        .scale(1.0)
+        .easing(Easing::EASE_OUT),
+    Beat::new(0.32).scale(1.06).easing(Easing::EASE_OUT),
+    Beat::new(0.44)
+        .opacity(0.0)
+        .scale(0.02)
+        .easing(Easing::EASE_IN),
+];
+/// Its inner figure turns up later and goes first.
+const BIND_INNER: &[Beat] = &[
+    Beat::new(0.0).opacity(0.0).scale(0.4),
+    Beat::new(0.08).opacity(0.0).scale(0.4),
+    Beat::new(0.26)
+        .opacity(1.0)
+        .scale(1.0)
+        .easing(Easing::OVERSHOOT),
+    Beat::new(0.40)
+        .opacity(0.0)
+        .scale(0.02)
+        .easing(Easing::EASE_IN),
+];
+/// The point it leaves flares and goes out, as a ring widens from it.
+const FLARE: &[Beat] = &[
+    Beat::new(0.0).opacity(0.0).scale(0.2),
+    Beat::new(0.38).opacity(0.0).scale(0.2),
+    Beat::new(0.42)
+        .opacity(1.0)
+        .scale(1.0)
+        .easing(Easing::EASE_OUT),
+    Beat::new(0.52)
+        .opacity(0.0)
+        .scale(1.8)
+        .easing(Easing::EASE_OUT),
+];
+/// A ring widening from the flare.
+const FLARE_RING: &[Beat] = &[
+    Beat::new(0.0).opacity(0.0).scale(0.1),
+    Beat::new(0.40).opacity(0.0).scale(0.1),
+    Beat::new(0.42).opacity(0.9).scale(0.2),
+    Beat::new(0.52)
+        .opacity(0.0)
+        .scale(1.0)
+        .easing(Easing::EASE_OUT),
+];
+/// The sigil's outer figure, `r` points in radius and centred in a `2r + 4` box: two circles
+/// with ticks between them, and a ring of runes inside.
+fn outer(r: f32, color: Color) -> Shape {
+    let c = r + 2.0;
+    let at = |r: f32, a: f32| [c + r * a.cos(), c + r * a.sin()];
+    let circle =
+        |r: f32| -> Vec<[f32; 2]> { (0..=96).map(|j| at(r, TAU * j as f32 / 96.0)).collect() };
+    let mut shape = Shape::new()
+        .stroke(circle(r), 4.0, color.alpha(color.a * 0.15))
+        .stroke(circle(r), 1.2, color)
+        .stroke(circle(r * 0.88), 1.0, color.alpha(color.a * 0.55));
+    for j in 0..24 {
+        let a = j as f32 / 24.0 * TAU;
+        let long = if j % 2 == 0 { 0.88 } else { 0.93 };
+        shape = shape.line(
+            at(r * long, a),
+            at(r, a),
+            1.0,
+            LineCap::Butt,
+            color.alpha(color.a * 0.7),
+        );
+    }
+    // Runes round the band between the circles.
+    for j in 0..12 {
+        let a = (j as f32 + 0.5) / 12.0 * TAU;
+        for line in super::runes::strokes(j * 5 + 3, at(r * 0.76, a), r * 0.1, a + FRAC_PI_2) {
+            shape = shape.stroke(line, 1.0, color.alpha(color.a * 0.8));
+        }
+    }
+    shape
+}
+
+/// The inner figure: a seven-pointed star (every third corner joined) in a small circle.
+fn inner(r: f32, color: Color) -> Shape {
+    let c = r + 2.0;
+    let at = |r: f32, a: f32| [c + r * a.cos(), c + r * a.sin()];
+    let star: Vec<[f32; 2]> = (0..=7)
+        .map(|j| at(r, -FRAC_PI_2 + (j * 3 % 7) as f32 * TAU / 7.0))
+        .collect();
+    let small: Vec<[f32; 2]> = (0..=64)
+        .map(|j| at(r * 0.3, TAU * j as f32 / 64.0))
+        .collect();
+    let ring: Vec<[f32; 2]> = (0..=96).map(|j| at(r, TAU * j as f32 / 96.0)).collect();
+    Shape::new()
+        .stroke(star.clone(), 3.5, color.alpha(color.a * 0.18))
+        .stroke(star, 1.0, color)
+        .stroke(ring, 1.0, color.alpha(color.a * 0.4))
+        .stroke(small, 1.0, color.alpha(color.a * 0.8))
+}
+
+impl Outro {
+    /// Sigil's glass, falling into the binding sigil's heart.
+    pub fn fall(self) -> Sequence {
+        self.at(FALL, 0.0)
+    }
+
+    /// Sigil's exit, instead of stardust: a sigil centred on (`cx`, `cy`) closes in over the
+    /// glass as it falls (`fall`), then collapses to a point that flares and goes out. Each part
+    /// is a childless element with its own sequence, so nothing fades through an offscreen layer.
+    pub fn binding(self, cx: f32, cy: f32, p: Palette) -> El {
+        let gold = p.glow.mix(Color::WHITE, 0.15);
+        let (ro, ri) = (150.0, 98.0);
+        let flare = 30.0;
+        el().key(format!("binding-{}", self.n))
+            .a11y_hidden()
+            .inert()
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .raise()
+            .child(
+                canvas(outer(ro, gold.alpha(0.9)))
+                    .absolute(cx - ro - 2.0, cy - ro - 2.0)
+                    .size(2.0 * ro + 4.0, 2.0 * ro + 4.0)
+                    .sequence(self.at(BIND, 0.0)),
+            )
+            .child(
+                canvas(inner(ri, gold.alpha(0.75)))
+                    .absolute(cx - ri - 2.0, cy - ri - 2.0)
+                    .size(2.0 * ri + 4.0, 2.0 * ri + 4.0)
+                    .sequence(self.at(BIND_INNER, 0.0)),
+            )
+            .child(
+                el().absolute(cx - 40.0, cy - 40.0)
+                    .size(80.0, 80.0)
+                    .radius(40.0)
+                    .border(1.0, gold.alpha(0.9))
+                    .sequence(self.at(FLARE_RING, 0.0)),
+            )
+            .child(
+                el().absolute(cx - flare / 2.0, cy - flare / 2.0)
+                    .size(flare, flare)
+                    .radius(flare / 2.0)
+                    .radial_gradient(
+                        [0.5, 0.5],
+                        [0.5, 0.5],
+                        [(0.0, Color::WHITE), (0.25, gold), (1.0, gold.alpha(0.0))],
+                    )
+                    .box_shadow(Shadow {
+                        x: 0.0,
+                        y: 0.0,
+                        blur: 30.0,
+                        spread: 2.0,
+                        color: gold.alpha(0.7),
+                        inset: false,
+                    })
+                    .sequence(self.at(FLARE, 0.0)),
+            )
+    }
+}

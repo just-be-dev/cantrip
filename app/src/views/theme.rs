@@ -10,7 +10,7 @@
 pub enum Theme {
     /// Occult geometry and ink: tarnished gold on ink, serif labels. Letters arrive as orbs of
     /// energy that bloom into runes and dissolve into the letter; deleted letters turn back into
-    /// runes and the wand draws them in.
+    /// runes and the wand draws them in. Closing, the bar falls into a binding sigil.
     #[default]
     Sigil,
     /// Violet and magenta glass and starlight: sparkles, sparks that write the letters, and

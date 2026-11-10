@@ -162,7 +162,8 @@ fn themes(s: &mut Cantrip) {
     s.set_selection(1);
 }
 
-/// Mid-exit: the glass disperses into stardust (render it over time with `--at`/`--strip`).
+/// Mid-exit: in Sigil the glass falls into a binding sigil (render it over time with
+/// `--at`/`--strip`).
 fn closing(s: &mut Cantrip) {
     root(s);
     s.visible = false;

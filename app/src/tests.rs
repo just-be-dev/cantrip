@@ -226,7 +226,10 @@ fn closing_disperses_before_the_window_hides_and_reopening_mid_way_plays_the_int
     settle(&mut rt);
     assert!(rt.state.closing, "the exit plays");
     assert_eq!(rt.state.outro, 1);
-    assert!(rt.find("seal-1").is_some(), "Sigil seals over the wand");
+    assert!(
+        rt.find("binding-1").is_some(),
+        "Sigil binds the bar in a sigil"
+    );
     rt.update(|s, _| s.set_theme(crate::views::theme::Theme::Arcane));
     rt.frame(1.0 / 60.0);
     assert!(

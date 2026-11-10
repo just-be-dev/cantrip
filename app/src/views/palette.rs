@@ -2,8 +2,8 @@
 //! is authored in sRGB (as design tools write them) and converted for Rune.
 //!
 //! Arcane: deep ink-violet glass, an aurora behind the search, a glowing violet→magenta
-//! selection, and coloured chips. Sigil: ink and tarnished gold, quiet light, serif small caps,
-//! a hairline frame inside the glass, and outlined chips.
+//! selection, and coloured chips. Sigil: ink and tarnished gold, quiet light, italic serif glosses for
+//! labels and kinds, and a hairline frame inside the glass.
 
 use rune::{Color, Family, TextStyle};
 
@@ -148,13 +148,38 @@ impl Palette {
         }
     }
 
-    /// Small capital labels: section headers, metadata labels.
+    /// Labels' type: section headers, metadata labels. Arcane's are small capitals; Sigil's,
+    /// glosses in italic, like a manuscript's marginalia.
     pub fn label_style(&self) -> TextStyle {
         match self.theme {
-            Theme::Sigil => TextStyle::new(11.0, 600.0)
-                .tracking(2.2)
-                .family(self.display),
+            Theme::Sigil => TextStyle::new(14.5, 400.0).italic().family(self.display),
             Theme::Arcane => TextStyle::new(10.5, 650.0).tracking(1.1),
+        }
+    }
+
+    /// A label as written.
+    pub fn label_text(&self, label: &str) -> String {
+        match self.theme {
+            Theme::Sigil => label.to_string(),
+            Theme::Arcane => label.to_uppercase(),
+        }
+    }
+
+    pub fn label_color(&self) -> Color {
+        match self.theme {
+            Theme::Sigil => self.glow.alpha(0.6),
+            Theme::Arcane => self.faint,
+        }
+    }
+
+    /// The type of a count beside a label (oldstyle figures in Sigil's italic).
+    pub fn count_style(&self) -> TextStyle {
+        match self.theme {
+            Theme::Sigil => TextStyle::new(14.5, 400.0)
+                .italic()
+                .features("'onum' 1")
+                .family(self.display),
+            Theme::Arcane => TextStyle::new(10.5, 600.0).features("'tnum'"),
         }
     }
 }

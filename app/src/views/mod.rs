@@ -76,11 +76,12 @@ fn font(size: f32, weight: f32) -> TextStyle {
     TextStyle::new(size, weight)
 }
 
-/// Small caps-ish labels: section headers, metadata labels.
+/// Labels: section headers, metadata labels.
 fn eyebrow(label: &str, look: Look) -> El {
-    text(label.to_uppercase())
-        .font(look.p.label_style())
-        .color(look.p.faint)
+    let p = look.p;
+    text(p.label_text(label))
+        .font(p.label_style())
+        .color(p.label_color())
 }
 
 pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
@@ -119,8 +120,12 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
     if s.closing {
         root = root.child(match s.theme {
             Theme::Arcane => Outro::new(s.outro).dust(MARGIN, MARGIN, PANEL_SIZE, p),
-            // A seal closes over the wand as the glass goes.
-            Theme::Sigil => Outro::new(s.outro).seal(WAND_CENTER[0], WAND_CENTER[1], p),
+            // A sigil closes over the panel as the glass falls into it.
+            Theme::Sigil => Outro::new(s.outro).binding(
+                MARGIN + PANEL_SIZE.0 / 2.0,
+                MARGIN + PANEL_SIZE.1 / 2.0,
+                p,
+            ),
         });
     }
     root
@@ -194,7 +199,11 @@ fn panel(s: &Cantrip, look: Look) -> El {
         .blur(if s.closing { 9.0 } else { 0.0 })
         .child(panel);
     match (s.revealed, look.intro) {
-        _ if s.closing => shell.sequence(Outro::new(s.outro).glass()),
+        _ if s.closing => shell.sequence(match s.theme {
+            Theme::Arcane => Outro::new(s.outro).glass(),
+            // It falls into the binding sigil at its centre.
+            Theme::Sigil => Outro::new(s.outro).fall(),
+        }),
         (false, _) => shell.sequence(Sequence::new(intro::CLOSED)),
         (true, Some(intro)) => {
             // It swells out of the wand's tip.
@@ -496,7 +505,7 @@ fn results(s: &Cantrip, look: Look) -> El {
                 .child(spacer())
                 .child(
                     text(rows.len().to_string())
-                        .font(font(10.5, 600.0).features("'tnum'"))
+                        .font(p.count_style())
                         .color(p.faint),
                 ),
         );
@@ -587,22 +596,23 @@ fn results(s: &Cantrip, look: Look) -> El {
 }
 
 /// A coloured tag at the end of a row.
-fn chip(label: &str, look: Look) -> El {
+fn chip(label: &str, selected: bool, look: Look) -> El {
     let p = look.p;
     let c = p.kind(label);
     if p.theme == Theme::Sigil {
-        // An outlined tag in spaced serif capitals.
+        // A gloss in the margin: a fading hairline and the kind in lowercase italics, quieter
+        // off the selection.
+        let c = c.alpha(c.a * if selected { 0.9 } else { 0.64 });
         return row()
-            .h(18.0)
-            .px(7.0)
-            .center()
-            .radius(4.0)
-            .border(1.0, c.alpha(0.35))
+            .h(20.0)
+            .gap(8.0)
+            .center_y()
             .child(
-                text(label.to_uppercase())
-                    .font(TextStyle::new(9.5, 600.0).tracking(1.5).family(p.display))
-                    .color(c.alpha(0.9)),
-            );
+                el().w(14.0)
+                    .h(1.0)
+                    .linear_gradient(FRAC_PI_2, [(0.0, c.alpha(0.0)), (1.0, c.alpha(c.a * 0.55))]),
+            )
+            .child(text(label.to_lowercase()).font(p.label_style()).color(c));
     }
     row()
         .h(20.0)
@@ -674,7 +684,7 @@ fn row_view(r: &Row, index: usize, selected: bool, look: Look) -> El {
         None => line.child(spacer().min_w(8.0)),
     };
     for accessory in &r.accessories {
-        line = line.child(chip(accessory, look));
+        line = line.child(chip(accessory, selected, look));
     }
     line
 }
