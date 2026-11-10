@@ -636,13 +636,19 @@ fn one_theme_command_previews_each_theme_as_you_scroll() {
     type_text(&mut rt, "theme");
     assert_eq!(titles(&rt)[0], "Change Theme");
     assert!(
-        !titles(&rt).iter().any(|t| t.ends_with(" Theme") && t != "Change Theme"),
+        !titles(&rt)
+            .iter()
+            .any(|t| t.ends_with(" Theme") && t != "Change Theme"),
         "one command, not one per theme"
     );
     press(&mut rt, Key::Enter);
     assert!(rt.state.picker.is_some());
     assert_eq!(titles(&rt), ["Sigil", "Arcane"]);
-    assert_eq!(rt.state.query(), "", "the picker starts with its own empty query");
+    assert_eq!(
+        rt.state.query(),
+        "",
+        "the picker starts with its own empty query"
+    );
     assert_eq!(rt.state.selection(), 0, "on the theme in use");
     assert_eq!(rt.state.section(), Some("Themes"));
     assert!(rt.find("picker").is_some());
@@ -666,7 +672,11 @@ fn one_theme_command_previews_each_theme_as_you_scroll() {
     press(&mut rt, Key::Enter);
     type_text(&mut rt, "arc");
     assert_eq!(titles(&rt), ["Arcane"]);
-    assert_eq!(rt.state.theme, Theme::Arcane, "filtering previews the first match");
+    assert_eq!(
+        rt.state.theme,
+        Theme::Arcane,
+        "filtering previews the first match"
+    );
     press(&mut rt, Key::Enter);
     assert!(rt.state.picker.is_none());
     assert_eq!(rt.state.theme, Theme::Arcane);
@@ -681,4 +691,126 @@ fn one_theme_command_previews_each_theme_as_you_scroll() {
     rt.update(|s, _| s.hide_panel());
     assert!(rt.state.picker.is_none());
     assert_eq!(rt.state.theme, Theme::Arcane);
+}
+
+#[test]
+fn the_grimoire_opens_as_a_book_to_leaf_through_and_cast_from() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "open grimoire");
+    assert_eq!(titles(&rt)[0], "Open Grimoire");
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.book.is_some());
+    assert!(rt.find("book").is_some(), "the spread is drawn");
+    assert!(
+        rt.find("page-curve").is_some(),
+        "its pages are redrawn curved"
+    );
+    assert_eq!(
+        rt.state.query(),
+        "",
+        "the book starts with its own empty query"
+    );
+    assert_eq!(rt.state.placeholder(), "Search the grimoire…");
+    assert_eq!(rt.state.section(), None, "the index heads its own page");
+    assert_eq!(
+        titles(&rt),
+        ["Generate UUID", "Git Branches", "Hello", "Party Mode"],
+        "every spell, alphabetical, and nothing else"
+    );
+    assert_eq!(rt.state.rows()[2].accessories, ["3"], "each with its folio");
+    assert!(rt.find("entry-spell:uuid.ts:uuid").is_some());
+
+    // The arrows turn the pages.
+    press(&mut rt, Key::Down);
+    press(&mut rt, Key::Down);
+    assert_eq!(rt.state.selection(), 2);
+    assert!(rt.find("entry-spell:hello.ts:hello").is_some());
+
+    // Typing searches it; folios keep their place in the book.
+    type_text(&mut rt, "party");
+    assert_eq!(titles(&rt), ["Party Mode"]);
+    assert_eq!(rt.state.rows()[0].accessories, ["4"]);
+    press(&mut rt, Key::Escape);
+    assert_eq!(rt.state.query(), "", "Esc clears the search first");
+    assert!(rt.state.book.is_some());
+
+    // ↵ casts the open entry; Back from the spell comes back to the book.
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert_eq!(
+        log(&mut rt),
+        [
+            "hide-panel",
+            r#"{"type":"run","session":"s1","command":"uuid.ts:uuid"}"#
+        ],
+        "a spell with no view is cast at once"
+    );
+    rt.update(|s, _| s.show_panel());
+    press(&mut rt, Key::Down);
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.session.is_some());
+    press(&mut rt, Key::Escape);
+    assert!(rt.state.session.is_none());
+    assert!(rt.state.book.is_some(), "back on the book's page");
+    assert_eq!(titles(&rt)[0], "Generate UUID");
+
+    // ⌘↵ shows the spell's file; Esc closes the book, back to the root search's query.
+    press_with(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    );
+    assert!(log(&mut rt).iter().any(|l| l.starts_with("reveal ")));
+    rt.update(|s, _| s.show_panel());
+    press(&mut rt, Key::Escape);
+    assert!(rt.state.book.is_none());
+    assert_eq!(rt.state.query(), "open grimoire");
+    assert_eq!(rt.state.field.text, "open grimoire");
+}
+
+#[test]
+fn the_grimoire_folder_is_still_a_command_away() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "grimoire in finder");
+    assert_eq!(titles(&rt)[0], "Show Grimoire in Finder");
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    let dir = crate::config::Config::grimoire_directory();
+    assert_eq!(
+        log(&mut rt),
+        [
+            format!("open {}", dir.to_string_lossy()),
+            "hide-panel".into()
+        ]
+    );
+}
+
+#[test]
+fn moving_through_the_book_turns_leaves_on_the_frame_clock() {
+    let mut book = crate::views::book::Book::new();
+    book.select(1);
+    book.select(0);
+    let mut rt = runtime(fixtures::root);
+    rt.update(move |s, tx| {
+        let mut book = book;
+        assert!(
+            book.leaves.frame(0.0, || false, tx),
+            "the cover and two leaves in the air"
+        );
+        assert!(book.leaves.frame(0.3, || false, tx));
+        assert!(
+            book.leaves.frame(2.0, || false, tx),
+            "one more to draw them landed"
+        );
+        assert!(!book.leaves.frame(2.1, || false, tx), "then still");
+        book.select(1);
+        assert!(
+            !book.leaves.frame(2.2, || true, tx),
+            "Reduce Motion turns none"
+        );
+        s.changed();
+    });
 }

@@ -524,6 +524,7 @@ dependencies = [
  "rune-kit",
  "serde",
  "serde_json",
+ "wgpu",
 ]
 
 [[package]]

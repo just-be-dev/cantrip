@@ -14,6 +14,7 @@ use crate::fuzzy;
 use crate::icons::Icon;
 use crate::protocol::*;
 use crate::services::Services;
+use crate::views::book::Book;
 use crate::views::theme::Theme;
 use crate::views::wand::{Gesture, Signals, Wand};
 
@@ -75,7 +76,7 @@ impl ActionItem {
             kind: ActionKindItem::Wire(action.clone()),
         }
     }
-    fn new(id: &str, title: &str, icon: &str, kind: ActionKindItem) -> Self {
+    pub fn new(id: &str, title: &str, icon: &str, kind: ActionKindItem) -> Self {
         ActionItem {
             id: id.into(),
             title: title.into(),
@@ -89,7 +90,10 @@ impl ActionItem {
 pub enum Builtin {
     ReloadGrimoire,
     RestartHost,
+    /// Open the grimoire as a book over the root search (`views::book`).
     OpenGrimoire,
+    /// The grimoire's folder, in Finder.
+    RevealGrimoire,
     OpenJournal,
     Quit,
     /// Open the theme picker (`ThemePicker`).
@@ -100,10 +104,11 @@ pub enum Builtin {
 
 impl Builtin {
     /// The ones the root search offers. (`UseTheme` is the picker's.)
-    pub const ALL: [Builtin; 6] = [
+    pub const ALL: [Builtin; 7] = [
         Builtin::ReloadGrimoire,
         Builtin::RestartHost,
         Builtin::OpenGrimoire,
+        Builtin::RevealGrimoire,
         Builtin::OpenJournal,
         Builtin::ChooseTheme,
         Builtin::Quit,
@@ -114,6 +119,7 @@ impl Builtin {
             Builtin::ReloadGrimoire => "reloadGrimoire",
             Builtin::RestartHost => "restartHost",
             Builtin::OpenGrimoire => "openGrimoire",
+            Builtin::RevealGrimoire => "revealGrimoire",
             Builtin::OpenJournal => "openJournal",
             Builtin::Quit => "quit",
             Builtin::ChooseTheme => "theme",
@@ -129,7 +135,8 @@ impl Builtin {
             Builtin::RestartHost => {
                 "Restart the background process that runs spells and daemons; stops any running spell"
             }
-            Builtin::OpenGrimoire => "Your spells folder",
+            Builtin::OpenGrimoire => "Leaf through your spells, bound in a book",
+            Builtin::RevealGrimoire => "Your spells folder",
             Builtin::OpenJournal => "The host's log",
             Builtin::Quit => "Close Cantrip",
             Builtin::ChooseTheme => "Preview the bar's magical themes and pick one",
@@ -142,6 +149,7 @@ impl Builtin {
             Builtin::ReloadGrimoire => "Reload Grimoire",
             Builtin::RestartHost => "Restart Host",
             Builtin::OpenGrimoire => "Open Grimoire",
+            Builtin::RevealGrimoire => "Show Grimoire in Finder",
             Builtin::OpenJournal => "Open Journal",
             Builtin::Quit => "Quit Cantrip",
             Builtin::ChooseTheme => "Change Theme",
@@ -155,7 +163,8 @@ impl Builtin {
         match self {
             Builtin::ReloadGrimoire => "arrow.clockwise",
             Builtin::RestartHost => "arrow.triangle.2.circlepath",
-            Builtin::OpenGrimoire => "books.vertical",
+            Builtin::OpenGrimoire => "book.closed",
+            Builtin::RevealGrimoire => "folder",
             Builtin::OpenJournal => "scroll",
             Builtin::Quit => "power",
             Builtin::ChooseTheme => "paintpalette",
@@ -230,6 +239,9 @@ pub struct Cantrip {
     pub session: Option<Session>,
     /// Open over the root search when no spell is (`Builtin::ChooseTheme`).
     pub picker: Option<ThemePicker>,
+    /// The grimoire as a book, open over the root search when no spell is
+    /// (`Builtin::OpenGrimoire`). A spell cast from it opens over it, and Back returns to it.
+    pub book: Option<Book>,
     pub actions_open: bool,
     pub actions_selection: usize,
     pub toast: Option<Toast>,
@@ -288,6 +300,7 @@ impl Cantrip {
             daemons: BTreeMap::new(),
             session: None,
             picker: None,
+            book: None,
             actions_open: false,
             actions_selection: 0,
             toast: None,
@@ -326,10 +339,18 @@ impl Cantrip {
     pub fn query(&self) -> &str {
         match &self.session {
             Some(s) => s.frames.last().map_or("", |f| f.query.as_str()),
-            None => match &self.picker {
-                Some(p) => &p.query,
-                None => &self.root_query,
-            },
+            None => self.root_field_query(),
+        }
+    }
+
+    /// The query when no spell is open: the picker's, the book's, or the root search's.
+    fn root_field_query(&self) -> &str {
+        if let Some(p) = &self.picker {
+            &p.query
+        } else if let Some(b) = &self.book {
+            &b.query
+        } else {
+            &self.root_query
         }
     }
 
@@ -362,6 +383,10 @@ impl Cantrip {
             picker.selection = 0;
             self.changed();
             self.preview_theme();
+        } else if let Some(book) = &mut self.book {
+            self.wand.edited(&book.query, &text, self.theme);
+            book.query = text;
+            book.selection = 0;
         } else {
             self.wand.edited(&self.root_query, &text, self.theme);
             self.root_query = text;
@@ -390,7 +415,11 @@ impl Cantrip {
     pub fn selection(&self) -> usize {
         match &self.session {
             Some(s) => s.frames.last().map_or(0, |f| f.selection),
-            None => self.picker.as_ref().map_or(self.root_selection, |p| p.selection),
+            None => match (&self.picker, &self.book) {
+                (Some(p), _) => p.selection,
+                (_, Some(b)) => b.selection,
+                _ => self.root_selection,
+            },
         }
     }
 
@@ -406,14 +435,18 @@ impl Cantrip {
                     p.selection = index;
                     self.preview_theme();
                 }
-                None => self.root_selection = index,
+                // A leaf turns toward it.
+                None => match &mut self.book {
+                    Some(b) => b.select(index),
+                    None => self.root_selection = index,
+                },
             },
         }
     }
 
     /// The label over the list, when it has one: the root's results, the picker's themes.
     pub fn section(&self) -> Option<&'static str> {
-        if self.session.is_some() || !self.query().is_empty() {
+        if self.session.is_some() || self.book.is_some() || !self.query().is_empty() {
             None
         } else if self.picker.is_some() {
             Some("Themes")
@@ -426,6 +459,9 @@ impl Cantrip {
         let Some(session) = &self.session else {
             if self.picker.is_some() {
                 return "Choose a theme…".into();
+            }
+            if self.book.is_some() {
+                return "Search the grimoire…".into();
             }
             return "Cast a spell or open an app…".into();
         };
@@ -458,6 +494,9 @@ impl Cantrip {
         let Some(session) = &self.session else {
             if let Some(picker) = &self.picker {
                 return theme_rows(&picker.query, picker.before);
+            }
+            if let Some(book) = &self.book {
+                return crate::views::book::rows(&self.commands, &book.query);
             }
             return self.root_rows();
         };
@@ -739,7 +778,8 @@ impl Cantrip {
                 self.services.restart_host();
                 self.show_toast(ToastStyle::Info, "Restarting host…", None, tx);
             }
-            Builtin::OpenGrimoire => {
+            Builtin::OpenGrimoire => self.open_book(),
+            Builtin::RevealGrimoire => {
                 self.services
                     .open(&crate::config::Config::grimoire_directory().to_string_lossy());
                 self.hide_panel();
@@ -773,9 +813,34 @@ impl Cantrip {
         self.changed();
     }
 
+    /// Opens the grimoire as a book, on its first page; its cover swings open. The root query
+    /// goes back into the wand.
+    pub fn open_book(&mut self) {
+        self.end_session();
+        self.cancel_theme_picker();
+        let was = self.root_field_query().to_string();
+        self.wand.edited(&was, "", self.theme);
+        self.book = Some(Book::new());
+        self.actions_open = false;
+        self.changed();
+        self.sync_field();
+    }
+
+    /// Closes the book, back to the root search and its query.
+    pub fn close_book(&mut self) {
+        let Some(book) = self.book.take() else {
+            return;
+        };
+        self.wand.edited(&book.query, &self.root_query, self.theme);
+        self.actions_open = false;
+        self.changed();
+        self.sync_field();
+    }
+
     /// Opens the theme picker on the theme in use. The root query goes back into the wand.
     pub fn open_theme_picker(&mut self) {
         self.end_session();
+        self.close_book();
         let before = self.theme;
         self.wand.edited(&self.root_query, "", before);
         self.picker = Some(ThemePicker {
@@ -795,7 +860,8 @@ impl Cantrip {
             return;
         };
         self.set_theme(picker.before);
-        self.wand.edited(&picker.query, &self.root_query, picker.before);
+        self.wand
+            .edited(&picker.query, &self.root_query, picker.before);
         self.actions_open = false;
         self.sync_field();
     }
@@ -870,6 +936,7 @@ impl Cantrip {
     /// Back to the root search with an empty query.
     pub fn reset(&mut self) {
         self.end_session();
+        self.book = None;
         self.root_query.clear();
         self.root_selection = 0;
         self.changed();
@@ -1005,11 +1072,12 @@ impl Cantrip {
     pub fn animate_wand(&mut self, t: f64, tx: &mut Tx) -> bool {
         let at_root = self.session.is_none() || self.wand.casting();
         let shown = at_root && (self.visible && self.revealed || self.closing);
-        let fizzled =
-            self.session.is_none() && !self.query().is_empty() && self.rows().is_empty();
-        let query = match &self.picker {
-            Some(p) => &p.query,
-            None => &self.root_query,
+        let fizzled = self.session.is_none() && !self.query().is_empty() && self.rows().is_empty();
+        // Field by field, so the wand can be borrowed beside it.
+        let query = match (&self.picker, &self.book) {
+            (Some(p), _) => &p.query,
+            (_, Some(b)) => &b.query,
+            _ => &self.root_query,
         };
         let signals = Signals {
             theme: self.theme,
@@ -1022,6 +1090,20 @@ impl Cantrip {
         let live = self.services.live;
         self.wand
             .frame(t, signals, || live && crate::platform::reduce_motion(), tx)
+    }
+
+    /// Turns the book's leaves to `t` on the frame clock, while it's on screen. True when the
+    /// view must rebuild for them.
+    pub fn animate_book(&mut self, t: f64, tx: &mut Tx) -> bool {
+        let shown = self.session.is_none() && (self.visible && self.revealed || self.closing);
+        let live = self.services.live;
+        match &mut self.book {
+            Some(book) if shown => {
+                book.leaves
+                    .frame(t, || live && crate::platform::reduce_motion(), tx)
+            }
+            _ => false,
+        }
     }
 
     /// Timers: toasts and the HUD go away by themselves. True when something visible changed.
@@ -1122,7 +1204,12 @@ impl Cantrip {
             return;
         }
         let header = self.section().is_some();
-        let (top, bottom) = crate::views::row_span(self.selection(), header);
+        let (top, bottom) =
+            if self.session.is_none() && self.picker.is_none() && self.book.is_some() {
+                crate::views::book::index_span(self.selection())
+            } else {
+                crate::views::row_span(self.selection(), header)
+            };
         let from = match self.scroll_target {
             Some((target, asked)) if asked.elapsed() < GLIDE_RECENT => target,
             _ => at.offset,
@@ -1155,6 +1242,8 @@ impl Cantrip {
             self.sync_field();
         } else if self.picker.is_some() {
             self.cancel_theme_picker();
+        } else if self.book.is_some() {
+            self.close_book();
         } else {
             self.hide_panel();
         }
@@ -1302,13 +1391,19 @@ impl Cantrip {
 fn theme_rows(query: &str, current: Theme) -> Vec<Row> {
     Theme::ALL
         .into_iter()
-        .filter(|t| query.is_empty() || fuzzy::score_fields(query, &[t.title(), t.describe()]).is_some())
+        .filter(|t| {
+            query.is_empty() || fuzzy::score_fields(query, &[t.title(), t.describe()]).is_some()
+        })
         .map(|t| Row {
             id: format!("theme:{}", t.id()),
             title: t.title().into(),
             subtitle: Some(t.describe().into()),
             icon: Icon::parse(Some(Builtin::UseTheme(t).icon())),
-            accessories: if t == current { vec!["✓".into()] } else { Vec::new() },
+            accessories: if t == current {
+                vec!["✓".into()]
+            } else {
+                Vec::new()
+            },
             actions: vec![ActionItem::new(
                 "use",
                 "Use Theme",

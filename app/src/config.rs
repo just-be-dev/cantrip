@@ -59,6 +59,30 @@ impl Config {
         }
     }
 
+    /// Where the spell `id` is written: its file or its directory's entry (`Registry.ts` names a
+    /// file's spells after the file, without its extension, then `:export`). The grimoire
+    /// itself when it can't be found.
+    pub fn spell_file(id: &str) -> PathBuf {
+        let dir = Self::grimoire_directory();
+        let base = id.split(':').next().unwrap_or(id);
+        let here = dir.join(base);
+        if here.is_dir() {
+            return ["index.ts", "index.tsx", "index.js"]
+                .iter()
+                .map(|entry| here.join(entry))
+                .find(|p| p.is_file())
+                .unwrap_or(here);
+        }
+        if here.is_file() {
+            return here;
+        }
+        ["ts", "tsx", "js", "jsx", "mjs"]
+            .iter()
+            .map(|ext| dir.join(format!("{base}.{ext}")))
+            .find(|p| p.is_file())
+            .unwrap_or(dir)
+    }
+
     pub fn load() -> Config {
         let path = Self::directory().join("config.json");
         let Ok(text) = std::fs::read_to_string(&path) else {

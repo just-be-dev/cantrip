@@ -1,6 +1,7 @@
 //! The bar, drawn with Rune in the theme's look (`theme.rs`, `palette.rs`): search field over an
 //! aurora, results or a spell's view, footer, and ⌘K actions.
 
+pub mod book;
 pub mod hud;
 pub mod intro;
 pub mod outro;
@@ -454,6 +455,8 @@ fn content(s: &Cantrip, look: Look) -> El {
         detail_view(markdown, metadata, look)
     } else if s.session.is_some() && s.current_view().is_none() {
         el()
+    } else if s.session.is_none() && s.picker.is_none() && s.book.is_some() {
+        book::view(s, look)
     } else {
         results(s, look)
     };
@@ -858,6 +861,9 @@ fn footer(s: &Cantrip, look: Look) -> El {
             &session.command.title,
             look,
         )
+    } else if s.book.is_some() {
+        let open = crate::store::Builtin::OpenGrimoire;
+        footer_title("book", &Icon::parse(Some(open.icon())), "Grimoire", look)
     } else if s.picker.is_some() {
         let choose = crate::store::Builtin::ChooseTheme;
         footer_title("picker", &Icon::parse(Some(choose.icon())), "Themes", look)

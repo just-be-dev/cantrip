@@ -15,6 +15,10 @@ pub const SCENES: &[Scene] = &[
     ("root-arcane", root_arcane),
     ("opening-arcane", opening_arcane),
     ("themes", themes),
+    ("grimoire", grimoire),
+    ("grimoire-arcane", grimoire_arcane),
+    ("grimoire-opening", grimoire_opening),
+    ("grimoire-turning", grimoire_turning),
     ("closing", closing),
     ("closing-arcane", closing_arcane),
     ("query", query),
@@ -160,6 +164,84 @@ fn themes(s: &mut Cantrip) {
     s.type_query("them");
     s.open_theme_picker();
     s.set_selection(1);
+}
+
+/// A grimoire with more in it than the root's: the book's scenes leaf through these.
+fn tome() -> Vec<WireCommand> {
+    let mut all = commands();
+    let mut more = |id: &str, title: &str, subtitle: &str, icon: &str, keywords: &[&str]| {
+        let mut c = command(id, title, Some(subtitle), icon, CommandMode::View);
+        c.keywords = keywords.iter().map(|k| (*k).into()).collect();
+        all.push(c);
+    };
+    more(
+        "clipboard:history",
+        "Clipboard History",
+        "Everything you copied today, searchable, and pasted back with a word",
+        "doc.on.clipboard",
+        &["paste", "copy"],
+    );
+    more(
+        "windows:arrange",
+        "Arrange Windows",
+        "Halves, thirds and quarters of the screen for the frontmost window",
+        "rectangle.split.2x1",
+        &["tile", "snap"],
+    );
+    more(
+        "timer:brew",
+        "Brew Timer",
+        "Counts down while the tea steeps, and rings a bell when it's done",
+        "timer",
+        &["tea", "countdown"],
+    );
+    more(
+        "weather:sky",
+        "Read the Sky",
+        "Tomorrow's weather, as the clouds would tell it",
+        "cloud.sun",
+        &["weather", "forecast"],
+    );
+    more(
+        "notes:scribe",
+        "Scribe a Note",
+        "Write a line into today's journal",
+        "pencil.and.scribble",
+        &["journal"],
+    );
+    all
+}
+
+/// The grimoire as a book, open on its third entry.
+fn grimoire(s: &mut Cantrip) {
+    root(s);
+    s.commands = tome();
+    s.open_book();
+    if let Some(book) = &mut s.book {
+        // Opened long ago: no cover in the air.
+        *book = crate::views::book::Book::default();
+        book.selection = 2;
+    }
+    s.changed();
+}
+
+/// The book in the Arcane theme: night vellum and star-ink.
+fn grimoire_arcane(s: &mut Cantrip) {
+    grimoire(s);
+    s.set_theme(crate::views::theme::Theme::Arcane);
+}
+
+/// The book just opened: its cover swings over (render it over time with `--at`/`--strip`).
+fn grimoire_opening(s: &mut Cantrip) {
+    root(s);
+    s.commands = tome();
+    s.open_book();
+}
+
+/// A leaf turning forward, from the third entry to the fourth (render with `--at`/`--strip`).
+fn grimoire_turning(s: &mut Cantrip) {
+    grimoire(s);
+    s.set_selection(3);
 }
 
 /// Mid-exit: in Sigil the glass falls into a binding sigil (render it over time with

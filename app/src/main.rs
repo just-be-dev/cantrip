@@ -46,7 +46,8 @@ pub fn spec() -> AppSpec<Cantrip> {
         setup: Some(|_, waker| icons::install(waker)),
         poll: Some(|s, t, tx| {
             let wand = s.animate_wand(t, tx);
-            s.tick(Instant::now()) || wand
+            let book = s.animate_book(t, tx);
+            s.tick(Instant::now()) || wand || book
         }),
         on_key: Some(on_key),
         ..AppSpec::new(
@@ -67,6 +68,8 @@ fn main() {
     rune::prewarm_gpu();
     let config = Config::load();
     let mut app = App::new(spec())
+        // Draws the grimoire's pages curved (`views::book::Warp`); everything else as Rune does.
+        .compositor(views::book::Warp::default())
         .keep_running()
         .accessory()
         .configured_options(WindowOptions::launcher_panel().macos(|native| native.shadow(false)))
@@ -165,6 +168,7 @@ fn start(s: &mut Cantrip, config: Config, handle: AppHandle<Cantrip>) {
         shortcut: config.menu_shortcut(),
         builtins: vec![
             builtin(MainCommand::OpenGrimoire, Builtin::OpenGrimoire, ""),
+            builtin(MainCommand::RevealGrimoire, Builtin::RevealGrimoire, ""),
             builtin(MainCommand::OpenJournal, Builtin::OpenJournal, ""),
             builtin(MainCommand::ReloadGrimoire, Builtin::ReloadGrimoire, "r"),
             builtin(MainCommand::RestartHost, Builtin::RestartHost, ""),
@@ -182,6 +186,9 @@ fn start(s: &mut Cantrip, config: Config, handle: AppHandle<Cantrip>) {
         s.set_theme(theme);
     }
 
+    // The grimoire's leather and parchment take a moment to paint: do it now, aside.
+    // (At Retina scale; another display paints its own the first time it shows the book.)
+    views::book::prepare(2.0);
     platform::login::enable_on_first_run();
     rescan(s, &handle);
 
@@ -206,7 +213,12 @@ fn rescan(s: &mut Cantrip, handle: &AppHandle<Cantrip>) {
 fn main_command(s: &mut Cantrip, command: MainCommand, tx: &mut Tx) {
     match command {
         MainCommand::OpenPanel => s.show_panel(),
-        MainCommand::OpenGrimoire => s.perform_builtin(Builtin::OpenGrimoire, tx),
+        MainCommand::OpenGrimoire => {
+            s.show_panel();
+            s.perform_builtin(Builtin::OpenGrimoire, tx);
+            tx.wake_after(store::REVEAL_FALLBACK + Duration::from_millis(50));
+        }
+        MainCommand::RevealGrimoire => s.perform_builtin(Builtin::RevealGrimoire, tx),
         MainCommand::OpenJournal => s.perform_builtin(Builtin::OpenJournal, tx),
         MainCommand::ReloadGrimoire => s.perform_builtin(Builtin::ReloadGrimoire, tx),
         MainCommand::RestartHost => s.perform_builtin(Builtin::RestartHost, tx),

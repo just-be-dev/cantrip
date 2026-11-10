@@ -94,6 +94,7 @@ fn menu_item(mtm: MainThreadMarker, title: &str, key: &str) -> Retained<NSMenuIt
 pub enum MainCommand {
     OpenPanel,
     OpenGrimoire,
+    RevealGrimoire,
     OpenJournal,
     ReloadGrimoire,
     RestartHost,
@@ -101,9 +102,10 @@ pub enum MainCommand {
     Quit,
 }
 
-const MAIN_COMMANDS: [MainCommand; 7] = [
+const MAIN_COMMANDS: [MainCommand; 8] = [
     MainCommand::OpenPanel,
     MainCommand::OpenGrimoire,
+    MainCommand::RevealGrimoire,
     MainCommand::OpenJournal,
     MainCommand::ReloadGrimoire,
     MainCommand::RestartHost,
