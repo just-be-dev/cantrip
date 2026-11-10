@@ -1,0 +1,91 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = "Cantrip — a command bar for macOS that casts spells",
+  description = "Press ⌥ Space, type, hit ↵. Cantrip is a native macOS command bar whose commands are spells: Effect programs you write in TypeScript, run on Bun.",
+} = Astro.props;
+const image = new URL("/media/arcane.webp", Astro.url).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0e0c17" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/media/icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={image} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <canvas class="stardust" aria-hidden="true"></canvas>
+    <div class="aurora" aria-hidden="true"></div>
+    <slot />
+    <script>
+      // Drifting motes of starlight behind everything; still under Reduce Motion.
+      const canvas = document.querySelector<HTMLCanvasElement>(".stardust")!;
+      const ctx = canvas.getContext("2d")!;
+      const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const colors = ["#b9a4ff", "#f39ad9", "#8fe3ff", "#ffffff"];
+      type Mote = { x: number; y: number; r: number; v: number; p: number; c: string };
+      let motes: Mote[] = [];
+      let w = 0;
+      let h = 0;
+
+      const resize = () => {
+        const dpr = Math.min(devicePixelRatio || 1, 2);
+        w = innerWidth;
+        h = innerHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const count = Math.round((w * h) / 9000);
+        motes = Array.from({ length: count }, () => ({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          r: Math.random() * 1.2 + 0.2,
+          v: Math.random() * 0.12 + 0.02,
+          p: Math.random() * Math.PI * 2,
+          c: colors[Math.floor(Math.random() * colors.length)]!,
+        }));
+      };
+
+      const draw = (t: number) => {
+        ctx.clearRect(0, 0, w, h);
+        for (const m of motes) {
+          if (!still) {
+            m.y -= m.v;
+            if (m.y < -4) m.y = h + 4;
+          }
+          const twinkle = still ? 0.6 : 0.35 + 0.65 * Math.abs(Math.sin(t / 1400 + m.p));
+          ctx.globalAlpha = twinkle * 0.7;
+          ctx.fillStyle = m.c;
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (!still) requestAnimationFrame(draw);
+      };
+
+      resize();
+      addEventListener("resize", () => {
+        resize();
+        if (still) draw(0);
+      });
+      requestAnimationFrame(draw);
+    </script>
+  </body>
+</html>

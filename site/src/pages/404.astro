@@ -1,0 +1,31 @@
+---
+import Base from "../layouts/Base.astro";
+
+export const prerender = true;
+---
+
+<Base title="Lost in the aether — Cantrip">
+  <main class="lost">
+    <p class="label">404</p>
+    <h1>This page <span class="glow-text">vanished.</span></h1>
+    <p class="lede">Whatever was here has been dispelled.</p>
+    <a class="button primary" href="/">Back to Cantrip</a>
+  </main>
+</Base>
+
+<style>
+  .lost {
+    min-height: 100vh;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 22px;
+    text-align: center;
+    padding: 24px;
+  }
+
+  h1 {
+    font-size: clamp(40px, 6vw, 68px);
+    letter-spacing: -0.03em;
+  }
+</style>

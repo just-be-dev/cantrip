@@ -1,0 +1,20 @@
+{
+  "name": "@just-be/secrets-alchemy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A project's vault in the secrets manager, from its Alchemy stack (docs/project-vaults.md)",
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "peerDependencies": {
+    "alchemy": ">=2.0.0-beta.83",
+    "effect": "^4.0.3"
+  }
+}

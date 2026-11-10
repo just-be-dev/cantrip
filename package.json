@@ -2,11 +2,26 @@
   "name": "cantrip-stack",
   "private": true,
   "type": "module",
-  "//": "Only for projects.just-be.dev deploys (alchemy.run.ts). The spell runtime is in runtime/.",
+  "//": "The website (site/) and its deploy (alchemy.run.ts) for projects.just-be.dev. The spell runtime is in runtime/, with its own lockfile.",
+  "workspaces": [
+    "site"
+  ],
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p site"
+  },
   "dependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
+    "@alchemy.run/frontend-frameworks": "2.0.0-beta.85",
     "@effect/platform-bun": "^4.1.2",
     "@effect/platform-node": "^4.1.2",
+    "@just-be/secrets-alchemy": "file:./vendor/secrets-alchemy",
     "alchemy": "2.0.0-beta.85",
     "effect": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "7.0.2"
   }
 }

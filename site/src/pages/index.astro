@@ -1,0 +1,553 @@
+---
+import { Code } from "astro:components";
+import Install from "../components/Install.astro";
+import Base from "../layouts/Base.astro";
+import { latest } from "../lib/releases.ts";
+
+// Rendered per request so the download always names the latest release.
+export const prerender = false;
+
+const release = await latest();
+Astro.response.headers.set("cache-control", "public, max-age=60");
+
+const spell = `import * as Effect from "effect/Effect"
+import { Spell, Ui } from "cantrip"
+
+// No view: the bar hides at once, the spell runs, and a HUD flashes.
+export const uuid = Spell.make({
+  title: "Generate UUID",
+  icon: "number",              // SF Symbol, emoji, or a file path
+  mode: "no-view",
+  run: Effect.gen(function*() {
+    const id = crypto.randomUUID()
+    yield* Ui.copy(id)
+    yield* Ui.hud(\`Copied \${id}\`)
+  })
+})`;
+
+const daemon = `export const battery = Daemon.summon({
+  title: "Battery",
+  icon: "battery.100",
+  run: Effect.gen(function*() {
+    while (true) {
+      const level = yield* readBattery
+      yield* MenuBar.render({
+        icon: MenuBar.ring(level),
+        title: \`\${Math.round(level * 100)}%\`,
+      })
+      yield* Effect.sleep("1 minute")
+    }
+  })
+})`;
+
+const features = [
+  {
+    glyph: "✦",
+    title: "Spells are programs",
+    body: "Every command is an Effect program in a .ts file in your grimoire. Lists, details, searches, actions, toasts: describe the view, and the bar draws it natively.",
+  },
+  {
+    glyph: "↻",
+    title: "Save to reload",
+    body: "Edit a spell and it's live the moment you save. Nothing to install: Cantrip links cantrip and effect into your grimoire and writes the tsconfig for you.",
+  },
+  {
+    glyph: "◐",
+    title: "Daemons in the menu bar",
+    body: "Spells that stay running put a ring, a title and a menu in the menu bar. Their finalizers always run, and they hand state over across reloads.",
+  },
+  {
+    glyph: "›_",
+    title: "Commands in your terminal",
+    body: "Give a spell an effect/cli Command and it's on your PATH, running inside Cantrip with the daemon's live state. Ctrl-C interrupts; exit codes come back.",
+  },
+  {
+    glyph: "⌘",
+    title: "Native, and quick",
+    body: "Rust, drawn on the GPU with Rune, with real AppKit menus and status items. Apps and spells in one fuzzy search, ⌘K for every action.",
+  },
+  {
+    glyph: "☾",
+    title: "Two magical themes",
+    body: "Arcane's violet glass and stardust, or Sigil's ink and tarnished gold. The wand casts the bar open and sends a spark to every letter you type.",
+  },
+];
+
+const repo = "https://github.com/just-be-dev/cantrip";
+---
+
+<Base>
+  <header class="wrap nav">
+    <a class="brand" href="/">
+      <img src="/media/icon.png" alt="" width="30" height="30" />
+      <span>cantrip</span>
+    </a>
+    <nav>
+      <a href="#spells">Spells</a>
+      <a href="#daemons">Daemons</a>
+      <a href="#install">Install</a>
+      <a href={repo}>GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <div class="hero-copy">
+        <p class="label">A command bar for macOS</p>
+        <h1>Press <kbd>⌥</kbd> <kbd>Space</kbd><br />and <span class="glow-text">cast a spell.</span></h1>
+        <p class="lede">
+          Cantrip opens your apps and runs your commands, and every command is a spell: a few lines of
+          TypeScript, running on Bun, that you can write yourself.
+        </p>
+        <Install release={release} />
+      </div>
+
+      <figure class="stage">
+        <div class="halo" aria-hidden="true"></div>
+        <video
+          class="bar"
+          autoplay
+          muted
+          loop
+          playsinline
+          poster="/media/arcane.webp"
+          width="1520"
+          height="960"
+          aria-label="The Cantrip bar opening, then searching for spells as you type"
+        >
+          <source src="/media/demo.webm" type="video/webm" />
+          <source src="/media/demo.mp4" type="video/mp4" />
+        </video>
+      </figure>
+    </section>
+
+    <section class="wrap features">
+      <div class="grid">
+        {
+          features.map((f) => (
+            <article class="feature glass">
+              <span class="glyph" aria-hidden="true">{f.glyph}</span>
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </article>
+          ))
+        }
+      </div>
+    </section>
+
+    <section id="spells" class="wrap split">
+      <div class="copy">
+        <p class="label">Writing a spell</p>
+        <h2>A spell is a file.<br /><span class="glow-text">Save it, cast it.</span></h2>
+        <p class="lede">
+          Your spells live in <code>~/.config/cantrip/grimoire/</code>. Every exported
+          <code>Spell.make(…)</code> becomes a command in the bar. Each view gets its own scope, so
+          fibers, resources and child processes are cleaned up when you close it.
+        </p>
+        <ul class="points">
+          <li><code>Ui.list</code>, <code>Ui.detail</code>, <code>Ui.searchList</code> — views are data</li>
+          <li><code>Action.copy</code>, <code>open</code>, <code>run</code>, <code>push</code></li>
+          <li>Logs and failures show up where you can see them</li>
+        </ul>
+      </div>
+      <div class="code glass">
+        <div class="code-head"><span class="label">grimoire/uuid.ts</span></div>
+        <Code code={spell} lang="ts" theme="tokyo-night" />
+      </div>
+    </section>
+
+    <section id="daemons" class="wrap split reverse">
+      <div class="copy">
+        <p class="label">Daemons</p>
+        <h2>Some magic<br /><span class="glow-text">keeps running.</span></h2>
+        <p class="lede">
+          A daemon puts an item in the menu bar and keeps going while the bar is closed. Two real ones
+          ship in the grimoire: <strong>claude-usage</strong>, what's left of your plan limits as a
+          ring, and <strong>insomnia</strong>, which keeps the Mac awake with the lid closed.
+        </p>
+      </div>
+      <div class="code glass">
+        <div class="code-head"><span class="label">grimoire/battery.ts</span></div>
+        <Code code={daemon} lang="ts" theme="tokyo-night" />
+      </div>
+    </section>
+
+    <section class="wrap themes">
+      <div class="copy center">
+        <p class="label">Themes</p>
+        <h2>Violet glass, <span class="glow-text">or ink and gold.</span></h2>
+        <p class="lede">Change Theme previews each one as you scroll. ↵ keeps it.</p>
+      </div>
+      <div class="pair">
+        <figure>
+          <img class="shot" src="/media/arcane.webp" alt="The bar in Arcane: violet glass" width="1520" height="960" loading="lazy" />
+          <figcaption><span class="label">Arcane</span> violet glass and starlight</figcaption>
+        </figure>
+        <figure>
+          <img class="shot" src="/media/sigil.webp" alt="The bar in Sigil: ink and tarnished gold, with italic serif glosses" width="1520" height="960" loading="lazy" />
+          <figcaption><span class="label sigil">Sigil</span> ink and tarnished gold</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="install" class="wrap install-section">
+      <div class="panel glass">
+        <div>
+          <p class="label">Install</p>
+          <h2>Summon it.</h2>
+          <p class="lede">
+            One line installs Cantrip to <code>/Applications</code> and opens it. Run it again to
+            update; daemons hand their state over.
+          </p>
+        </div>
+        <Install release={release} />
+        <details>
+          <summary>Installing from the zip instead</summary>
+          <p>
+            Cantrip isn't notarized yet, so macOS quarantines a browser download. Unzip it, move
+            <code>Cantrip.app</code> to Applications, then either right-click it and choose
+            <strong>Open</strong>, or run:
+          </p>
+          <pre><code>xattr -dr com.apple.quarantine /Applications/Cantrip.app</code></pre>
+          <p>
+            Every release is listed at <a href="/latest.json"><code>/latest.json</code></a> with its
+            SHA-256.
+          </p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <span><span class="spark">✦</span> cantrip</span>
+    <span>
+      <a href={repo}>Source</a> · Built with Rust, <a href="https://github.com/anomalyco/rune">Rune</a>,{" "}
+      <a href="https://bun.sh">Bun</a> and <a href="https://effect.website">Effect</a>
+    </span>
+  </footer>
+</Base>
+
+<style>
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-block: 22px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+  }
+
+  .brand img {
+    filter: drop-shadow(0 0 12px rgb(127 84 255 / 0.6));
+  }
+
+  .nav nav {
+    display: flex;
+    gap: 26px;
+    font-size: 15px;
+  }
+
+  .nav nav a {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .nav nav a:hover {
+    color: var(--text);
+  }
+
+  .hero {
+    display: grid;
+    gap: 56px;
+    padding-top: 64px;
+    padding-bottom: 72px;
+  }
+
+  .hero-copy {
+    display: grid;
+    gap: 24px;
+    justify-items: start;
+  }
+
+  .hero h1 {
+    font-size: clamp(44px, 7vw, 80px);
+    font-weight: 750;
+    letter-spacing: -0.035em;
+  }
+
+  .hero h1 kbd {
+    font-size: 0.42em;
+    letter-spacing: 0;
+    vertical-align: 0.5em;
+    border-radius: 10px;
+    padding: 0 0.6em;
+  }
+
+  .stage {
+    position: relative;
+    margin: 0;
+  }
+
+  .halo {
+    position: absolute;
+    inset: -6% -4%;
+    background:
+      radial-gradient(50% 50% at 30% 30%, rgb(127 84 255 / 0.55), transparent 70%),
+      radial-gradient(45% 50% at 75% 60%, rgb(237 77 194 / 0.35), transparent 70%);
+    filter: blur(50px);
+    animation: breathe 7s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    50% {
+      opacity: 0.65;
+      transform: scale(0.98);
+    }
+  }
+
+  .bar,
+  .shot {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: clamp(14px, 2vw, 22px);
+    box-shadow:
+      0 0 0 1px rgb(255 255 255 / 0.14),
+      0 40px 120px -30px rgb(0 0 0 / 0.9);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+  }
+
+  .features {
+    padding-top: 24px;
+  }
+
+  .feature {
+    padding: 26px;
+    display: grid;
+    gap: 10px;
+    align-content: start;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+
+  .feature:hover {
+    border-color: rgb(127 84 255 / 0.45);
+    transform: translateY(-2px);
+  }
+
+  .feature p {
+    color: var(--muted);
+    font-size: 15.5px;
+  }
+
+  .glyph {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+    border: 1px solid rgb(127 84 255 / 0.4);
+    background: linear-gradient(135deg, rgb(127 84 255 / 0.3), rgb(237 77 194 / 0.15));
+    color: #e4dbff;
+    font-weight: 700;
+    font-size: 17px;
+    box-shadow: 0 0 22px -4px rgb(127 84 255 / 0.7);
+    margin-bottom: 6px;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 56px;
+    align-items: center;
+  }
+
+  .split.reverse .copy {
+    order: 2;
+  }
+
+  .copy {
+    display: grid;
+    gap: 20px;
+    align-content: start;
+  }
+
+  .copy.center {
+    justify-items: center;
+    text-align: center;
+  }
+
+  .points {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 10px;
+    color: var(--muted);
+  }
+
+  .points li::before {
+    content: "✦";
+    color: var(--glow-2);
+    margin-right: 10px;
+    font-size: 12px;
+  }
+
+  .copy code,
+  details code {
+    color: #d9cbff;
+    background: rgb(127 84 255 / 0.12);
+    padding: 0.1em 0.4em;
+    border-radius: 6px;
+  }
+
+  .code {
+    overflow: hidden;
+  }
+
+  .code-head {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--edge-soft);
+  }
+
+  .code :global(pre.astro-code) {
+    margin: 0;
+    padding: 20px 22px 24px;
+    background: transparent !important;
+    font-size: 14px;
+    line-height: 1.65;
+    overflow-x: auto;
+  }
+
+  .themes {
+    display: grid;
+    gap: 48px;
+    justify-items: center;
+  }
+
+  .pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 28px;
+    width: 100%;
+  }
+
+  .pair figure {
+    margin: 0;
+    display: grid;
+    gap: 14px;
+  }
+
+  .pair figcaption {
+    color: var(--faint);
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .pair figcaption .label {
+    color: #c9b8ff;
+    margin-right: 8px;
+  }
+
+  .pair figcaption .sigil {
+    color: #c8a96a;
+    font-family: "Iowan Old Style", Palatino, Georgia, serif;
+    font-style: italic;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 15px;
+  }
+
+  .panel {
+    display: grid;
+    gap: 32px;
+    padding: clamp(28px, 5vw, 56px);
+    background:
+      radial-gradient(80% 120% at 0% 0%, rgb(127 84 255 / 0.22), transparent 60%),
+      radial-gradient(60% 100% at 100% 100%, rgb(237 77 194 / 0.14), transparent 60%),
+      rgb(21 18 31 / 0.85);
+  }
+
+  .panel h2 {
+    margin: 8px 0 14px;
+  }
+
+  details {
+    color: var(--muted);
+    font-size: 15px;
+    border-top: 1px solid var(--edge-soft);
+    padding-top: 20px;
+  }
+
+  details summary {
+    cursor: pointer;
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  details p {
+    margin-top: 12px;
+  }
+
+  details pre {
+    margin: 12px 0 0;
+    padding: 14px 16px;
+    border-radius: 12px;
+    background: rgb(0 0 0 / 0.35);
+    border: 1px solid var(--edge-soft);
+    overflow-x: auto;
+  }
+
+  details pre code {
+    background: none;
+    padding: 0;
+  }
+
+  .foot {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    padding-block: 40px 56px;
+    color: var(--faint);
+    font-size: 14px;
+    border-top: 1px solid var(--edge-soft);
+  }
+
+  .foot a {
+    color: var(--muted);
+  }
+
+  .spark {
+    color: var(--glow-2);
+  }
+
+  @media (max-width: 860px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .split.reverse .copy {
+      order: 0;
+    }
+    .nav nav a:not(:last-child) {
+      display: none;
+    }
+    section {
+      padding-block: 64px;
+    }
+  }
+</style>

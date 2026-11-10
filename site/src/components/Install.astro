@@ -1,0 +1,150 @@
+---
+/** The one-line installer and the zip, for the release on offer (if any). */
+import { formatSize, type Release } from "../lib/releases.ts";
+
+interface Props {
+  release: Release | undefined;
+}
+
+const { release } = Astro.props;
+const command = `curl -fsSL ${Astro.url.origin}/install.sh | sh`;
+---
+
+<div class="install">
+  <div class="command glass">
+    <span class="prompt" aria-hidden="true">$</span>
+    <code>{command}</code>
+    <button class="copy" type="button" data-copy={command} aria-label="Copy install command">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <rect x="9" y="9" width="11" height="11" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+        <path d="M5 15V6.5A1.5 1.5 0 0 1 6.5 5H15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      </svg>
+      <span class="copied">Copied</span>
+    </button>
+  </div>
+
+  <div class="row">
+    {
+      release ? (
+        <a class="button primary" href="/download">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Download {release.version}
+        </a>
+      ) : (
+        <span class="button primary" aria-disabled="true">First release coming soon</span>
+      )
+    }
+    <p class="meta">
+      {release && <span>{formatSize(release.size)} zip · </span>}
+      macOS {release?.minimumSystemVersion ?? "15"}+ · Apple silicon
+    </p>
+  </div>
+</div>
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-copy]")) {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.dataset.copy ?? "");
+      button.classList.add("done");
+      setTimeout(() => button.classList.remove("done"), 1600);
+    });
+  }
+</script>
+
+<style>
+  .install {
+    display: grid;
+    gap: 18px;
+    width: min(620px, 100%);
+  }
+
+  .command {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 14px 14px 20px;
+    border-radius: 14px;
+    position: relative;
+  }
+
+  .command::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 14px;
+    bottom: 14px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--sweep);
+    box-shadow: 0 0 14px var(--glow-2);
+  }
+
+  .prompt {
+    color: var(--glow-2);
+    font-family: var(--mono);
+    font-weight: 700;
+  }
+
+  .command code {
+    flex: 1;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .copy {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--edge);
+    background: rgb(255 255 255 / 0.05);
+    color: var(--muted);
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .copy:hover {
+    color: var(--text);
+    background: rgb(255 255 255 / 0.1);
+  }
+
+  .copied {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    padding: 4px 10px;
+    border-radius: 8px;
+    background: var(--raised);
+    border: 1px solid var(--edge);
+    color: var(--green);
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+
+  .copy.done .copied {
+    opacity: 1;
+    transform: none;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px 20px;
+  }
+
+  .meta {
+    color: var(--faint);
+    font-size: 14px;
+  }
+</style>

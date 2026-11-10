@@ -40,11 +40,25 @@ dir = "runtime"
 run = "bun src/host/main.ts"
 
 [tasks.typecheck]
-description = "Typecheck the runtime and example spells"
+description = "Typecheck the runtime, example spells, and the website's stack and server code"
 run = [
   "cd runtime && bun run typecheck",
   "cd grimoire && ../runtime/node_modules/.bin/tsc --noEmit -p .",
+  "bun install --frozen-lockfile >/dev/null && node_modules/.bin/tsc --noEmit -p .",
+  "cd site && ../node_modules/.bin/astro sync >/dev/null && ../node_modules/.bin/tsc --noEmit -p .",
 ]
+
+[tasks.site]
+description = "Run the website (site/) locally with alchemy dev, with a local release bucket"
+run = "bun install && bun run dev"
+
+[tasks.site-media]
+description = "Re-render the website's screenshots and demo video from the app's headless scenes"
+run = "scripts/site-media.sh"
+
+[tasks.release]
+description = "Build Cantrip.app and publish it to cantrip.just-be.dev (needs CANTRIP_RELEASE_TOKEN)"
+run = "scripts/release.sh"
 
 [tasks.build]
 description = "Build build/Cantrip.app"

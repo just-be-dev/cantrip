@@ -1,0 +1,3 @@
+[install]
+# Hoisted, so the Astro build (run by @alchemy.run/frontend-frameworks at the root) finds site/'s astro.
+linker = "hoisted"

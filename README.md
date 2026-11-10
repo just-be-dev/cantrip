@@ -13,7 +13,17 @@ menus and status items). The commands, called **spells**, are
                                                    lines   ~/.config/cantrip/grimoire/*.ts
 ```
 
-## Quick start
+## Install
+
+```sh
+curl -fsSL https://cantrip.just-be.dev/install.sh | sh
+```
+
+Or download the zip from [cantrip.just-be.dev](https://cantrip.just-be.dev). It needs macOS 15
+or later on Apple silicon. The app isn't notarized, so a browser download is quarantined: right-click
+→ Open, or `xattr -dr com.apple.quarantine /Applications/Cantrip.app`. The installer avoids that.
+
+## Quick start (from source)
 
 ```sh
 mise install            # bun 1.4.4 (pinned in mise.toml)
@@ -289,9 +299,29 @@ Environment variables, for development:
 app/        Rust crate on Rune: panel, hotkey, host bridge, views, menu bar (src/)
 runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
 grimoire/   example spells and daemons, copied to ~/.config/cantrip/grimoire on first run
-scripts/    bundle.sh builds Cantrip.app
-alchemy.run.ts  an empty stack, so projects.just-be.dev deploys succeed (nothing to deploy)
+scripts/    bundle.sh builds Cantrip.app; release.sh publishes it to the website
+site/       the website, cantrip.just-be.dev (Astro), where Cantrip is downloaded from
+alchemy.run.ts  deploys the website and its R2 bucket of releases (projects.just-be.dev)
 ```
+
+## The website and releases
+
+[cantrip.just-be.dev](https://cantrip.just-be.dev) is an Astro site (`site/`) on a Cloudflare
+Worker, deployed by `alchemy.run.ts` on every push to `main` (other branches get previews). Release
+zips live in an R2 bucket next to it; the site serves `/download` (the latest zip),
+`/download/Cantrip-<version>.zip`, `/latest.json`, and `/install.sh`, rendered per request with the
+latest version and SHA-256 baked in.
+
+```sh
+mise run site               # alchemy dev: the site locally, with a local bucket
+mise run release            # build Cantrip.app and publish it (needs CANTRIP_RELEASE_TOKEN)
+mise run site-media         # re-render the site's screenshots and demo video from the app
+```
+
+`mise run release` uploads through `PUT /api/releases/<version>`. The token is minted by the stack
+and written to the project's vault as `CANTRIP_RELEASE_TOKEN`; copy it from
+[secrets.just-be.dev](https://secrets.just-be.dev). Versions are Info.plist's version plus the
+commit (`0.1.0-0da9964`).
 
 The wire protocol is documented in
 [`runtime/src/host/Protocol.ts`](runtime/src/host/Protocol.ts) and mirrored in

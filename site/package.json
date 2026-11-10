@@ -1,0 +1,12 @@
+{
+  "name": "cantrip-site",
+  "private": true,
+  "type": "module",
+  "//": "Built and deployed by the root alchemy.run.ts (Cloudflare.Website.Astro); `bun run dev` at the root serves it locally.",
+  "dependencies": {
+    "astro": "^7.4.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261101.1"
+  }
+}

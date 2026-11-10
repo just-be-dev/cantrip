@@ -23,7 +23,10 @@ macOS command bar. Rust app drawn with [Rune](https://github.com/anomalyco/rune)
 
 - bun is pinned to 1.4.4 in `mise.toml`, `engines.bun` in `runtime/package.json`, and `MinimumBun` in `runtime/src/host/main.ts`. Bump all three together. Use `mise exec -- bun …` if your PATH has an older bun.
 
-- The repo lives on projects.just-be.dev (`origin`), mirrored to github.com/just-be-dev/cantrip. Every push to `main` runs a deploy; the root `package.json` + `alchemy.run.ts` are an empty Alchemy stack so those succeed. Don't add resources to it unless Cantrip grows something to host.
+- The repo lives on projects.just-be.dev (`origin`), mirrored to github.com/just-be-dev/cantrip. Every push to `main` deploys prod; other branches deploy previews.
+- The root `package.json` + `alchemy.run.ts` deploy the website, cantrip.just-be.dev, where Cantrip is distributed from: the Astro site in `site/` (`Cloudflare.Website.Astro`, a bun workspace; `bunfig.toml` hoists so the Astro build finds `astro`) and an R2 bucket of release zips. `project.ts` reads what the platform's runner provides (`PROJECT_NAME`, `STAGE`, `PROJECT_HOST`, ...). Keep returning `{ url }` from the stack. `rootDir` must stay absolute (`alchemy dev` resolves a relative one twice).
+- Releases: `scripts/release.sh` (`mise run release`) zips `build/Cantrip.app` and uploads it through `PUT /api/releases/<version>` with `CANTRIP_RELEASE_TOKEN`, which the stack mints and writes to the project's vault. The site's `/install.sh` is rendered per request from `latest.json`, and does what `bundle.sh --install` does (hand-off, replace, open). The bucket layout is documented in `site/src/lib/releases.ts`. Don't edit `vendor/secrets-alchemy`; it's a vendored copy from the secrets manager.
+- The site's screenshots and demo video come from the app's headless scenes: `scripts/site-media.sh` (`mise run site-media`). Re-run it when the bar's look changes. The site wears the Arcane palette (`site/src/styles/global.css`, from `palette.rs`).
 
 ## Effect
 
