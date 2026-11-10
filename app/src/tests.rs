@@ -625,3 +625,57 @@ fn the_placeholder_waits_for_deleted_text_to_fade() {
     }
     assert_eq!(alpha(&rt), 1.0, "then it's back");
 }
+
+#[test]
+fn one_theme_command_previews_each_theme_as_you_scroll() {
+    use crate::views::theme::Theme;
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "theme");
+    assert_eq!(titles(&rt)[0], "Change Theme");
+    assert!(
+        !titles(&rt).iter().any(|t| t.ends_with(" Theme") && t != "Change Theme"),
+        "one command, not one per theme"
+    );
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.picker.is_some());
+    assert_eq!(titles(&rt), ["Sigil", "Arcane"]);
+    assert_eq!(rt.state.query(), "", "the picker starts with its own empty query");
+    assert_eq!(rt.state.selection(), 0, "on the theme in use");
+    assert_eq!(rt.state.section(), Some("Themes"));
+    assert!(rt.find("picker").is_some());
+
+    // Moving the highlight wears the theme, without saving it.
+    press(&mut rt, Key::Down);
+    assert_eq!(rt.state.theme, Theme::Arcane);
+    press(&mut rt, Key::Up);
+    assert_eq!(rt.state.theme, Theme::Sigil);
+    press(&mut rt, Key::Down);
+    assert!(!log(&mut rt).iter().any(|l| l.starts_with("theme ")));
+
+    // Esc puts the old one back, and the root query.
+    press(&mut rt, Key::Escape);
+    assert!(rt.state.picker.is_none());
+    assert_eq!(rt.state.theme, Theme::Sigil);
+    assert_eq!(rt.state.query(), "theme");
+    assert_eq!(rt.state.field.text, "theme");
+
+    // ↵ keeps the highlighted one.
+    press(&mut rt, Key::Enter);
+    type_text(&mut rt, "arc");
+    assert_eq!(titles(&rt), ["Arcane"]);
+    assert_eq!(rt.state.theme, Theme::Arcane, "filtering previews the first match");
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.picker.is_none());
+    assert_eq!(rt.state.theme, Theme::Arcane);
+    assert!(log(&mut rt).contains(&"theme arcane".to_string()));
+    assert_eq!(rt.state.query(), "", "back to a fresh search");
+
+    // Reopened, it starts on the theme in use, and closing the bar cancels a preview.
+    rt.update(|s, _| s.open_theme_picker());
+    assert_eq!(rt.state.selection(), 1);
+    press(&mut rt, Key::Up);
+    assert_eq!(rt.state.theme, Theme::Sigil);
+    rt.update(|s, _| s.hide_panel());
+    assert!(rt.state.picker.is_none());
+    assert_eq!(rt.state.theme, Theme::Arcane);
+}

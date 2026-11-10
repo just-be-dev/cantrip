@@ -92,18 +92,20 @@ pub enum Builtin {
     OpenGrimoire,
     OpenJournal,
     Quit,
-    /// Switch the bar's magic to a theme.
+    /// Open the theme picker (`ThemePicker`).
+    ChooseTheme,
+    /// Switch the bar's magic to a theme, as the picker does when one is chosen.
     UseTheme(Theme),
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 7] = [
+    /// The ones the root search offers. (`UseTheme` is the picker's.)
+    pub const ALL: [Builtin; 6] = [
         Builtin::ReloadGrimoire,
         Builtin::RestartHost,
         Builtin::OpenGrimoire,
         Builtin::OpenJournal,
-        Builtin::UseTheme(Theme::Sigil),
-        Builtin::UseTheme(Theme::Arcane),
+        Builtin::ChooseTheme,
         Builtin::Quit,
     ];
 
@@ -114,6 +116,7 @@ impl Builtin {
             Builtin::OpenGrimoire => "openGrimoire",
             Builtin::OpenJournal => "openJournal",
             Builtin::Quit => "quit",
+            Builtin::ChooseTheme => "theme",
             Builtin::UseTheme(Theme::Sigil) => "theme:sigil",
             Builtin::UseTheme(Theme::Arcane) => "theme:arcane",
         }
@@ -129,6 +132,7 @@ impl Builtin {
             Builtin::OpenGrimoire => "Your spells folder",
             Builtin::OpenJournal => "The host's log",
             Builtin::Quit => "Close Cantrip",
+            Builtin::ChooseTheme => "Preview the bar's magical themes and pick one",
             Builtin::UseTheme(t) => t.describe(),
         }
     }
@@ -140,6 +144,7 @@ impl Builtin {
             Builtin::OpenGrimoire => "Open Grimoire",
             Builtin::OpenJournal => "Open Journal",
             Builtin::Quit => "Quit Cantrip",
+            Builtin::ChooseTheme => "Change Theme",
             Builtin::UseTheme(Theme::Sigil) => "Sigil Theme",
             Builtin::UseTheme(Theme::Arcane) => "Arcane Theme",
         }
@@ -153,10 +158,22 @@ impl Builtin {
             Builtin::OpenGrimoire => "books.vertical",
             Builtin::OpenJournal => "scroll",
             Builtin::Quit => "power",
+            Builtin::ChooseTheme => "paintpalette",
             Builtin::UseTheme(Theme::Sigil) => "seal",
             Builtin::UseTheme(Theme::Arcane) => "sparkles",
         }
     }
+}
+
+/// The theme picker, over the root search: one row per theme, the highlighted one worn live
+/// (palette, wand, spells and all) so scrolling previews it. ↵ keeps it; Esc, or the bar
+/// closing, puts back the one it opened on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemePicker {
+    pub query: String,
+    pub selection: usize,
+    /// The theme in use when it opened.
+    pub before: Theme,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -211,6 +228,8 @@ pub struct Cantrip {
     /// Each running daemon's menu bar item, by daemon id. Its menu actions are searchable too.
     pub daemons: BTreeMap<String, WireStatusItem>,
     pub session: Option<Session>,
+    /// Open over the root search when no spell is (`Builtin::ChooseTheme`).
+    pub picker: Option<ThemePicker>,
     pub actions_open: bool,
     pub actions_selection: usize,
     pub toast: Option<Toast>,
@@ -268,6 +287,7 @@ impl Cantrip {
             apps: Vec::new(),
             daemons: BTreeMap::new(),
             session: None,
+            picker: None,
             actions_open: false,
             actions_selection: 0,
             toast: None,
@@ -306,7 +326,10 @@ impl Cantrip {
     pub fn query(&self) -> &str {
         match &self.session {
             Some(s) => s.frames.last().map_or("", |f| f.query.as_str()),
-            None => &self.root_query,
+            None => match &self.picker {
+                Some(p) => &p.query,
+                None => &self.root_query,
+            },
         }
     }
 
@@ -333,6 +356,12 @@ impl Cantrip {
                     text,
                 });
             }
+        } else if let Some(picker) = &mut self.picker {
+            self.wand.edited(&picker.query, &text, self.theme);
+            picker.query = text;
+            picker.selection = 0;
+            self.changed();
+            self.preview_theme();
         } else {
             self.wand.edited(&self.root_query, &text, self.theme);
             self.root_query = text;
@@ -361,7 +390,7 @@ impl Cantrip {
     pub fn selection(&self) -> usize {
         match &self.session {
             Some(s) => s.frames.last().map_or(0, |f| f.selection),
-            None => self.root_selection,
+            None => self.picker.as_ref().map_or(self.root_selection, |p| p.selection),
         }
     }
 
@@ -372,12 +401,32 @@ impl Cantrip {
                     f.selection = index
                 }
             }
-            None => self.root_selection = index,
+            None => match &mut self.picker {
+                Some(p) => {
+                    p.selection = index;
+                    self.preview_theme();
+                }
+                None => self.root_selection = index,
+            },
+        }
+    }
+
+    /// The label over the list, when it has one: the root's results, the picker's themes.
+    pub fn section(&self) -> Option<&'static str> {
+        if self.session.is_some() || !self.query().is_empty() {
+            None
+        } else if self.picker.is_some() {
+            Some("Themes")
+        } else {
+            Some("Results")
         }
     }
 
     pub fn placeholder(&self) -> String {
         let Some(session) = &self.session else {
+            if self.picker.is_some() {
+                return "Choose a theme…".into();
+            }
             return "Cast a spell or open an app…".into();
         };
         if let Some(Some(WireView::List {
@@ -407,6 +456,9 @@ impl Cantrip {
 
     fn compute_rows(&self) -> Vec<Row> {
         let Some(session) = &self.session else {
+            if let Some(picker) = &self.picker {
+                return theme_rows(&picker.query, picker.before);
+            }
             return self.root_rows();
         };
         let Some(Some(WireView::List {
@@ -698,7 +750,15 @@ impl Cantrip {
                 self.hide_panel();
             }
             Builtin::Quit => tx.quit(),
+            Builtin::ChooseTheme => self.open_theme_picker(),
             Builtin::UseTheme(theme) => {
+                if let Some(picker) = self.picker.take() {
+                    // Back to a fresh root search, wearing it.
+                    self.wand.edited(&picker.query, "", theme);
+                    self.root_query.clear();
+                    self.root_selection = 0;
+                    self.sync_field();
+                }
                 self.set_theme(theme);
                 self.services.save_theme(theme);
                 let title = format!("{} theme", theme.title());
@@ -711,6 +771,49 @@ impl Cantrip {
     pub fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
         self.changed();
+    }
+
+    /// Opens the theme picker on the theme in use. The root query goes back into the wand.
+    pub fn open_theme_picker(&mut self) {
+        self.end_session();
+        let before = self.theme;
+        self.wand.edited(&self.root_query, "", before);
+        self.picker = Some(ThemePicker {
+            query: String::new(),
+            selection: Theme::ALL.iter().position(|t| *t == before).unwrap_or(0),
+            before,
+        });
+        self.actions_open = false;
+        self.changed();
+        self.sync_field();
+    }
+
+    /// Closes the theme picker without choosing: the theme it opened on comes back, and so
+    /// does the root query.
+    pub fn cancel_theme_picker(&mut self) {
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
+        self.set_theme(picker.before);
+        self.wand.edited(&picker.query, &self.root_query, picker.before);
+        self.actions_open = false;
+        self.sync_field();
+    }
+
+    /// Wear the picker's highlighted theme.
+    fn preview_theme(&mut self) {
+        if self.picker.is_none() {
+            return;
+        }
+        let theme = self.selected_row().and_then(|r| {
+            r.actions.iter().find_map(|a| match a.kind {
+                ActionKindItem::Builtin(Builtin::UseTheme(t)) => Some(t),
+                _ => None,
+            })
+        });
+        if let Some(theme) = theme.filter(|t| *t != self.theme) {
+            self.set_theme(theme);
+        }
     }
 
     fn run(&mut self, command: WireCommand) {
@@ -809,6 +912,8 @@ impl Cantrip {
         if !self.visible {
             return;
         }
+        // Leaving without choosing is choosing nothing.
+        self.cancel_theme_picker();
         self.visible = false;
         self.focused = false;
         self.revealed = false;
@@ -901,12 +1006,16 @@ impl Cantrip {
         let at_root = self.session.is_none() || self.wand.casting();
         let shown = at_root && (self.visible && self.revealed || self.closing);
         let fizzled =
-            self.session.is_none() && !self.root_query.is_empty() && self.rows().is_empty();
+            self.session.is_none() && !self.query().is_empty() && self.rows().is_empty();
+        let query = match &self.picker {
+            Some(p) => &p.query,
+            None => &self.root_query,
+        };
         let signals = Signals {
             theme: self.theme,
             shown,
             intro: self.intro,
-            query: &self.root_query,
+            query,
             fizzled,
             scroll: self.scroll.get().offset,
         };
@@ -1012,7 +1121,7 @@ impl Cantrip {
             tx.scroll_into_view(row_key(self.selection()));
             return;
         }
-        let header = self.session.is_none() && self.query().is_empty();
+        let header = self.section().is_some();
         let (top, bottom) = crate::views::row_span(self.selection(), header);
         let from = match self.scroll_target {
             Some((target, asked)) if asked.elapsed() < GLIDE_RECENT => target,
@@ -1044,6 +1153,8 @@ impl Cantrip {
         } else if !self.query().is_empty() {
             self.set_query(String::new());
             self.sync_field();
+        } else if self.picker.is_some() {
+            self.cancel_theme_picker();
         } else {
             self.hide_panel();
         }
@@ -1185,6 +1296,27 @@ impl Cantrip {
             );
         }
     }
+}
+
+/// The picker's rows: every theme matching `query`, the one in use (`current`) ticked.
+fn theme_rows(query: &str, current: Theme) -> Vec<Row> {
+    Theme::ALL
+        .into_iter()
+        .filter(|t| query.is_empty() || fuzzy::score_fields(query, &[t.title(), t.describe()]).is_some())
+        .map(|t| Row {
+            id: format!("theme:{}", t.id()),
+            title: t.title().into(),
+            subtitle: Some(t.describe().into()),
+            icon: Icon::parse(Some(Builtin::UseTheme(t).icon())),
+            accessories: if t == current { vec!["✓".into()] } else { Vec::new() },
+            actions: vec![ActionItem::new(
+                "use",
+                "Use Theme",
+                "checkmark",
+                ActionKindItem::Builtin(Builtin::UseTheme(t)),
+            )],
+        })
+        .collect()
 }
 
 /// The element key of the row at `index` in the results list.

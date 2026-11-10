@@ -482,16 +482,17 @@ fn results(s: &Cantrip, look: Look) -> El {
             .child(text(message).font(font(13.5, 500.0)).color(p.muted));
     }
     let selection = s.selection();
-    let header = s.session.is_none() && s.query().is_empty();
+    let section = s.section();
+    let header = section.is_some();
     let mut list = col().key("rows").w_full().gap(ROW_GAP).instant_changes();
-    if header {
+    if let Some(section) = section {
         list = list.child(
             row()
                 .key("section")
                 .h(SECTION_H)
                 .px(12.0)
                 .center_y()
-                .child(eyebrow("Results", look))
+                .child(eyebrow(section, look))
                 .child(spacer())
                 .child(
                     text(rows.len().to_string())
@@ -783,6 +784,20 @@ fn error_view(title: &str, message: &str, look: Look) -> El {
 
 // MARK: Footer and actions
 
+/// What's open, at the footer's start: a spell, or the theme picker.
+fn footer_title(key: &str, icon: &Icon, title: &str, look: Look) -> El {
+    row()
+        .key(key)
+        .gap(7.0)
+        .center_y()
+        .child(icons::view(icon, 15.0, look.p.muted, look.scale))
+        .child(
+            text(title.to_string())
+                .font(font(12.0, 600.0))
+                .color(look.p.muted),
+        )
+}
+
 fn footer(s: &Cantrip, look: Look) -> El {
     let p = look.p;
     let leading = if let Some(toast) = &s.toast {
@@ -827,21 +842,15 @@ fn footer(s: &Cantrip, look: Look) -> El {
         }
         line
     } else if let Some(session) = &s.session {
-        row()
-            .key("spell")
-            .gap(7.0)
-            .center_y()
-            .child(icons::view(
-                &Icon::parse(session.command.icon.as_deref()),
-                15.0,
-                p.muted,
-                look.scale,
-            ))
-            .child(
-                text(session.command.title.clone())
-                    .font(font(12.0, 600.0))
-                    .color(p.muted),
-            )
+        footer_title(
+            "spell",
+            &Icon::parse(session.command.icon.as_deref()),
+            &session.command.title,
+            look,
+        )
+    } else if s.picker.is_some() {
+        let choose = crate::store::Builtin::ChooseTheme;
+        footer_title("picker", &Icon::parse(Some(choose.icon())), "Themes", look)
     } else {
         match p.theme {
             Theme::Arcane => row()

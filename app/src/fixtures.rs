@@ -14,6 +14,7 @@ pub const SCENES: &[Scene] = &[
     ("opening", opening),
     ("root-arcane", root_arcane),
     ("opening-arcane", opening_arcane),
+    ("themes", themes),
     ("closing", closing),
     ("closing-arcane", closing_arcane),
     ("query", query),
@@ -151,6 +152,14 @@ fn root_arcane(s: &mut Cantrip) {
 fn opening_arcane(s: &mut Cantrip) {
     opening(s);
     s.set_theme(crate::views::theme::Theme::Arcane);
+}
+
+/// The theme picker, scrolled to Arcane: the bar wears it while it's highlighted.
+fn themes(s: &mut Cantrip) {
+    root(s);
+    s.type_query("them");
+    s.open_theme_picker();
+    s.set_selection(1);
 }
 
 /// Mid-exit: the glass disperses into stardust (render it over time with `--at`/`--strip`).
