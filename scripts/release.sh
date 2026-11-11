@@ -3,15 +3,19 @@
 # upload it through the site's PUT /api/releases/<version>. The site then offers it at /download
 # and through /install.sh.
 #
-#   CANTRIP_RELEASE_TOKEN=… scripts/release.sh            → build and publish
-#   CANTRIP_RELEASE_TOKEN=… scripts/release.sh --no-build → publish build/Cantrip.app as it is
+# You don't run this by hand: .github/workflows/release.yml runs it on GitHub Actions for every
+# push to main that touches the app, and the site trusts that workflow's GitHub OIDC token.
 #
-# The token is CANTRIP_RELEASE_TOKEN in the cantrip vault at https://secrets.just-be.dev (prod's
-# deploy writes it there). CANTRIP_SITE picks another site, e.g. a branch preview or
-# `alchemy dev`'s http://localhost:1337.
+#   scripts/release.sh            → build and publish
+#   scripts/release.sh --no-build → publish build/Cantrip.app as it is
+#
+# The token: in GitHub Actions (with `id-token: write`), the run's OIDC token for the site; else
+# CANTRIP_RELEASE_TOKEN, which only an `alchemy dev` site accepts (its RELEASE_TOKEN, in
+# .alchemy/state). CANTRIP_SITE picks the site, e.g. http://localhost:1337 for `alchemy dev`.
 #
 # The version is Info.plist's CFBundleShortVersionString plus the commit, e.g. 0.1.0-0da9964, so
-# every commit can be released; bump Info.plist for a release worth naming.
+# every commit can be released; bump Info.plist for a release worth naming. Publishing a version
+# that's already there changes nothing and succeeds.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,7 +24,17 @@ site="${site%/}"
 app="$root/build/Cantrip.app"
 plist="$root/app/Info.plist"
 
-: "${CANTRIP_RELEASE_TOKEN:?set CANTRIP_RELEASE_TOKEN (the cantrip vault at https://secrets.just-be.dev)}"
+token="${CANTRIP_RELEASE_TOKEN:-}"
+if [[ -z "$token" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+  echo "→ asking GitHub for an OIDC token for $site"
+  token="$(curl -fsS -H "authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+    "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$site" | sed -E 's/.*"value":"([^"]+)".*/\1/')"
+fi
+[[ -n "$token" ]] || {
+  echo "✗ no token: releases publish from GitHub Actions (.github/workflows/release.yml)," >&2
+  echo "  or set CANTRIP_RELEASE_TOKEN for an alchemy dev site" >&2
+  exit 1
+}
 
 if [[ -n "$(git -C "$root" status --porcelain)" && -z "${CANTRIP_ALLOW_DIRTY:-}" ]]; then
   echo "✗ the working tree has changes; commit them first (or set CANTRIP_ALLOW_DIRTY=1)" >&2
@@ -50,13 +64,18 @@ sha256="$(shasum -a 256 "$zip" | cut -d' ' -f1)"
 echo "  $(du -h "$zip" | cut -f1) · sha256 $sha256"
 
 echo "→ publishing to $site"
-curl --fail-with-body -sS -X PUT "$site/api/releases/$version" \
-  -H "authorization: Bearer $CANTRIP_RELEASE_TOKEN" \
+status="$(curl -sS -o "$tmp/response" -w '%{http_code}' -X PUT "$site/api/releases/$version" \
+  -H "authorization: Bearer $token" \
   -H "content-type: application/zip" \
   -H "x-cantrip-sha256: $sha256" \
   -H "x-cantrip-commit: $(git -C "$root" rev-parse HEAD)" \
   -H "x-cantrip-arch: $arch" \
   -H "x-cantrip-min-macos: $min_macos" \
-  --data-binary "@$zip"
+  --data-binary "@$zip")"
+cat "$tmp/response"
 echo
-echo "✓ Cantrip $version is live: $site/download"
+case "$status" in
+  201) echo "✓ Cantrip $version is live: $site/download" ;;
+  409) echo "✓ Cantrip $version was already published" ;;
+  *) echo "✗ publishing failed ($status)" >&2; exit 1 ;;
+esac

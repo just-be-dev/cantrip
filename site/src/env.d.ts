@@ -6,7 +6,12 @@ declare namespace Cloudflare {
   interface Env {
     /** Release zips and latest.json (src/lib/releases.ts). */
     RELEASES: R2Bucket;
-    /** Bearer token for `PUT /api/releases/<version>`; scripts/release.sh sends it. */
-    RELEASE_TOKEN: string;
+    /**
+     * `owner/repo` whose release workflow, on main, may publish with its GitHub OIDC token
+     * (src/pages/api/releases/[version].ts). Unset: no one may.
+     */
+    RELEASE_GITHUB_REPOSITORY?: string;
+    /** `alchemy dev` only: a shared token for `PUT /api/releases/<version>`, as there's no GitHub. */
+    RELEASE_TOKEN?: string;
   }
 }

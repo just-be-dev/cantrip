@@ -4,10 +4,13 @@
  * projects.just-be.dev runs `alchemy deploy --stage <STAGE>` on every push:
  * main serves prod at https://cantrip.just-be.dev, other branches a preview.
  *
- * Releases are uploaded through the site (`PUT /api/releases/<version>`,
- * scripts/release.sh) with a token minted here. In prod that token is also
- * written to the project's vault as CANTRIP_RELEASE_TOKEN, where the release
- * script's operator finds it (secrets.just-be.dev).
+ * Releases publish themselves: on every push to main that touches the app,
+ * GitHub Actions (.github/workflows/release.yml, on the GitHub mirror) builds
+ * Cantrip.app on macOS and uploads it through the site
+ * (`PUT /api/releases/<version>`) with the run's GitHub OIDC token, which the
+ * site verifies against RELEASE_GITHUB_REPOSITORY. Nothing secret is kept.
+ * `alchemy dev` has no GitHub, so a local stack binds a random RELEASE_TOKEN
+ * instead (read it from .alchemy/state to try scripts/release.sh locally).
  */
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as SecretsManager from "@just-be/secrets-alchemy";
@@ -38,12 +41,10 @@ export default Alchemy.Stack(
       forceDestroy: !isProd,
     });
 
-    const releaseToken = yield* Alchemy.makeRandom("ReleaseToken");
-    // Prod only (a preview's deploy writes nothing to the vault).
-    yield* SecretsManager.Secret("ReleaseTokenSecret", {
-      name: "CANTRIP_RELEASE_TOKEN",
-      value: releaseToken,
-    });
+    // Who may publish: prod trusts the release workflow on GitHub; a local
+    // stack, a token; a preview, no one (only main is released).
+    const local = stage === undefined;
+    const token = local ? yield* Alchemy.makeRandom("ReleaseToken") : undefined;
 
     const site = yield* Cloudflare.Website.Astro("Site", {
       // Absolute: `alchemy dev` runs the site in a child whose cwd is already
@@ -55,7 +56,8 @@ export default Alchemy.Stack(
       astro: isProd ? { site: `https://${host}` } : {},
       env: {
         RELEASES: releases,
-        RELEASE_TOKEN: releaseToken,
+        ...(token !== undefined && { RELEASE_TOKEN: token }),
+        ...(isProd && { RELEASE_GITHUB_REPOSITORY: "just-be-dev/cantrip" }),
       },
       ...placement(),
     });

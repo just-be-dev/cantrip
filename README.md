@@ -314,14 +314,15 @@ latest version and SHA-256 baked in.
 
 ```sh
 mise run site               # alchemy dev: the site locally, with a local bucket
-mise run release            # build Cantrip.app and publish it (needs CANTRIP_RELEASE_TOKEN)
 mise run site-media         # re-render the site's screenshots and demo video from the app
 ```
 
-`mise run release` uploads through `PUT /api/releases/<version>`. The token is minted by the stack
-and written to the project's vault as `CANTRIP_RELEASE_TOKEN`; copy it from
-[secrets.just-be.dev](https://secrets.just-be.dev). Versions are Info.plist's version plus the
-commit (`0.1.0-0da9964`).
+Releases publish themselves. Every push to `main` that touches the app (`app/`, `runtime/`,
+`grimoire/`, the build scripts) reaches the GitHub mirror, where
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds Cantrip.app on macOS and
+runs `scripts/release.sh`, which uploads it through `PUT /api/releases/<version>`. The site accepts
+only that workflow on `main`, by its GitHub OIDC token, so there's no secret to keep. Versions are
+Info.plist's version plus the commit (`0.1.0-0da9964`); bump Info.plist for one worth naming.
 
 The wire protocol is documented in
 [`runtime/src/host/Protocol.ts`](runtime/src/host/Protocol.ts) and mirrored in

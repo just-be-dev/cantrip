@@ -1,0 +1,62 @@
+# Publishes Cantrip.app to cantrip.just-be.dev on every push to main
+# that touches the app.
+#
+# Commits land on projects.just-be.dev and reach this GitHub mirror
+# within a few minutes; the platform deploys the website itself, and
+# this builds the app, which needs a Mac. The site lets this workflow,
+# on main, publish with the run's GitHub OIDC token (id-token: write),
+# so there's no secret to keep anywhere. Other branches only build.
+name: Release
+
+on:
+  push:
+    paths:
+      - app/**
+      - runtime/**
+      - grimoire/**
+      - scripts/bundle.sh
+      - scripts/release.sh
+      - mise.toml
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Only the newest commit on a branch needs building; latest.json follows main.
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # bun, pinned in mise.toml (bundle.sh puts it inside the app).
+      # Rust comes from app/rust-toolchain.toml via the runner's rustup.
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: bun
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: Build Cantrip.app
+        run: scripts/bundle.sh
+
+      - name: Publish to cantrip.just-be.dev
+        if: github.ref == 'refs/heads/main'
+        run: scripts/release.sh --no-build
+
+      - name: Keep the build
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cantrip.app
+          path: build/Cantrip.app
+          retention-days: 7

@@ -56,10 +56,6 @@ run = "bun install && bun run dev"
 description = "Re-render the website's screenshots and demo video from the app's headless scenes"
 run = "scripts/site-media.sh"
 
-[tasks.release]
-description = "Build Cantrip.app and publish it to cantrip.just-be.dev (needs CANTRIP_RELEASE_TOKEN)"
-run = "scripts/release.sh"
-
 [tasks.build]
 description = "Build build/Cantrip.app"
 run = "scripts/bundle.sh"
