@@ -803,7 +803,11 @@ fn moving_through_the_book_turns_leaves_on_the_frame_clock() {
         assert!(book.leaves.frame(0.3, || false, tx));
         assert!(
             book.leaves.frame(2.0, || false, tx),
-            "one more to draw them landed"
+            "drawn once lying exactly as they land"
+        );
+        assert!(
+            book.leaves.frame(2.05, || false, tx),
+            "then gone, which the view must draw"
         );
         assert!(!book.leaves.frame(2.1, || false, tx), "then still");
         book.select(1);
@@ -811,6 +815,7 @@ fn moving_through_the_book_turns_leaves_on_the_frame_clock() {
             !book.leaves.frame(2.2, || true, tx),
             "Reduce Motion turns none"
         );
+        assert!(book.leaves.still);
         s.changed();
     });
 }
@@ -827,7 +832,10 @@ fn a_turning_leaf_is_captured_with_its_writing_for_the_compositor() {
         s.animate_book(10.05, tx);
     });
     settle(&mut rt);
-    assert!(rt.find("turning").is_some(), "lying flat under the capture slot");
+    assert!(
+        rt.find("turning").is_some(),
+        "lying flat under the capture slot"
+    );
     assert!(rt.find("page-capture").is_some());
     assert!(
         rt.find("leaf-entry-spell:uuid.ts:uuid").is_some(),

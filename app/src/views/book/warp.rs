@@ -6,7 +6,9 @@
 //! draws it lying flat, writing and all, under a second slot (`capture`) whose backdrop the
 //! compositor copies into a texture it keeps, then draws the page beneath over it again; the
 //! shader draws the capture squeezed to the width the sheet shows at, so its writing turns
-//! with it (Rune scales elements only evenly).
+//! with it (Rune scales elements only evenly). A leaf back up on the left is drawn from the
+//! left page in the backdrop itself, writing and all. Lying flat, each sheet is exactly the
+//! page it lifts off or lands on, so a turn neither starts nor ends with a jump.
 //!
 //! `Warp` is the app's compositor: frames without the book draw as Rune would, and backdrops
 //! are only copied while it's up. Headless renders go through it too.
@@ -82,12 +84,11 @@ pub struct Warp {
 impl Compositor<Cantrip> for Warp {
     fn render(&mut self, f: &mut Frame<'_, Cantrip>) {
         let marks = &f.rt.marks;
-        let book = f
-            .rt
-            .instances
-            .iter()
-            .enumerate()
-            .any(|(n, i)| i.params[1] == KIND_EFFECT && marks.get(n) == Some(&CURVE));
+        let book =
+            f.rt.instances
+                .iter()
+                .enumerate()
+                .any(|(n, i)| i.params[1] == KIND_EFFECT && marks.get(n) == Some(&CURVE));
         if !book {
             return f.draw_ui();
         }
@@ -96,21 +97,22 @@ impl Compositor<Cantrip> for Warp {
             self.gpu = Some(Gpu::new(device, key));
         }
         let Some(gpu) = self.gpu.as_mut() else { return };
-        let recto = super::recto(&f.rt.state);
+        let (recto, verso) = super::sheets(&f.rt.state);
         let mut captured = false;
         let clear = f.rt.clear_color();
-        f.ui
-            .prepare(device, queue, &mut f.rt.text.atlas, &f.rt.instances, size);
+        f.ui.prepare(device, queue, &mut f.rt.text.atlas, &f.rt.instances, size);
         f.ui.draw_with_backdrop(f.encoder, f.target, clear, &mut |phase, site| {
-            let Some(backdrop) = site.backdrop else { return };
+            let Some(backdrop) = site.backdrop else {
+                return;
+            };
             match (site.mark, phase) {
                 (CAPTURE, EffectPhase::Backdrop(encoder)) => {
                     gpu.capture(device, encoder, site, backdrop);
                     captured = true;
                 }
                 (CURVE, EffectPhase::Draw(pass)) => {
-                    let leaf = recto.filter(|_| captured);
-                    gpu.curve(device, queue, pass, site, backdrop, leaf);
+                    let recto = recto.filter(|_| captured);
+                    gpu.curve(device, queue, pass, site, backdrop, recto, verso);
                 }
                 _ => {}
             }
@@ -159,7 +161,7 @@ impl Gpu {
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("page curve"),
-            size: 28 * 4,
+            size: 40 * 4,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -245,8 +247,18 @@ impl Gpu {
                 cache: None,
             })
         };
-        let curve = pipeline("page curve", include_str!("warp.wgsl"), &self.curve_layout, true);
-        let blit = pipeline("page capture", include_str!("blit.wgsl"), &self.blit_layout, false);
+        let curve = pipeline(
+            "page curve",
+            include_str!("warp.wgsl"),
+            &self.curve_layout,
+            true,
+        );
+        let blit = pipeline(
+            "page capture",
+            include_str!("blit.wgsl"),
+            &self.blit_layout,
+            false,
+        );
         self.pipes.push(Pipes {
             format,
             curve,
@@ -301,7 +313,9 @@ impl Gpu {
             }],
         });
         let blit = self.pipes(device, site.format).blit.clone();
-        let Some(captured) = &self.captured else { return };
+        let Some(captured) = &self.captured else {
+            return;
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("page capture"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -323,8 +337,9 @@ impl Gpu {
         pass.draw(0..3, 0..1);
     }
 
-    /// Redraws the backdrop at the curve slot through the pages' surface, and the captured
-    /// `leaf` (where it lies flat, where it shows, how upright) over it.
+    /// Redraws the backdrop at the curve slot through the pages' surface, and the sheets in
+    /// the air over it: the captured `recto`, and the `verso` from the backdrop.
+    #[allow(clippy::too_many_arguments)]
     fn curve(
         &mut self,
         device: &wgpu::Device,
@@ -332,11 +347,19 @@ impl Gpu {
         pass: &mut wgpu::RenderPass<'_>,
         site: &EffectSite<'_>,
         backdrop: &wgpu::TextureView,
-        leaf: Option<([f32; 4], [f32; 4], f32)>,
+        recto: Option<super::Sheet>,
+        verso: Option<super::Sheet>,
     ) {
         let r = site.instance.rect;
-        let (flat, now, stand) = leaf.unwrap_or(([0.0; 4], [0.0; 4], 0.0));
-        let values: [f32; 28] = [
+        let sheet = |s: Option<super::Sheet>| match s {
+            Some(s) => [
+                s.flat,
+                s.now,
+                [1.0, s.stand, s.fall, if s.cover { 1.0 } else { 0.0 }],
+            ],
+            None => [[0.0; 4]; 3],
+        };
+        let mut values: Vec<f32> = vec![
             r[0] - site.origin[0],
             r[1] - site.origin[1],
             r[2],
@@ -353,22 +376,12 @@ impl Gpu {
             PAGE_INSET_Y + PAGE_H,
             RAKE,
             BLEED,
-            flat[0],
-            flat[1],
-            flat[2],
-            flat[3],
-            now[0],
-            now[1],
-            now[2],
-            now[3],
-            if leaf.is_some() { 1.0 } else { 0.0 },
-            stand,
-            0.0,
-            0.0,
         ];
+        values.extend(sheet(recto).into_iter().flatten());
+        values.extend(sheet(verso).into_iter().flatten());
         let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
         queue.write_buffer(&self.uniforms, 0, &bytes);
-        let sheet = match (&self.captured, leaf) {
+        let sheet = match (&self.captured, recto) {
             (Some(c), Some(_)) if c.format == site.format => &c.view,
             _ => &self.blank,
         };
@@ -398,5 +411,26 @@ impl Gpu {
         pass.set_pipeline(&curve);
         pass.set_bind_group(0, &group, &[]);
         pass.draw(0..4, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A shader that doesn't compile takes the whole app down when the book opens.
+    #[test]
+    fn the_shaders_compile() {
+        for (name, source) in [
+            ("warp.wgsl", include_str!("warp.wgsl")),
+            ("blit.wgsl", include_str!("blit.wgsl")),
+        ] {
+            let module = naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        }
     }
 }

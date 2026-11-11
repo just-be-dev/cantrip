@@ -16,11 +16,16 @@ struct U {
     // The open pages' top and bottom; the light's sideways reach; how far the slot reaches
     // past the book on every side, for pages bulging over its edges.
     page: vec4<f32>,
-    // The sheet turning face up on the right (`leaf_on.x` > 0.5 when there is one): where it
-    // lies flat in the capture, where it shows now, and how upright it stands (`leaf_on.y`).
-    leaf_flat: vec4<f32>,
-    leaf_now: vec4<f32>,
-    leaf_on: vec4<f32>,
+    // The sheets turning (`Sheet` in `book.rs`): the one face up on the right, drawn from its
+    // capture, and the leaf back up on the left, drawn from the left page itself. Each: where
+    // it lies flat, where it shows now, and (whether there is one, how upright it stands, how
+    // far its shadow falls, whether it's the cover).
+    recto_flat: vec4<f32>,
+    recto_now: vec4<f32>,
+    recto_k: vec4<f32>,
+    verso_flat: vec4<f32>,
+    verso_now: vec4<f32>,
+    verso_k: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -71,6 +76,29 @@ fn across(g: f32, w: f32) -> f32 {
 }
 fn across_rate(g: f32, w: f32) -> f32 {
     return 1.0 - CROWD * (exp(-g / CROWD_IN) / CROWD_IN - (1.0 - exp(-w / CROWD_IN)) / w);
+}
+
+// Where a point of the book is in the pass's textures.
+fn at_uv(b: vec2<f32>) -> vec2<f32> {
+    return (u.rect.xy + (b + vec2<f32>(u.page.w)) * u.k.x) / u.k.zw;
+}
+
+fn inside(q: vec2<f32>, r: vec4<f32>) -> bool {
+    return q.x >= r.x && q.x < r.x + r.z && q.y >= r.y && q.y < r.y + r.w;
+}
+
+// A standing sheet's light, `a` across it from the spine: darkest at the spine.
+fn lit(a: f32, stand: f32) -> f32 {
+    return 1.0 - 0.5 * stand * (1.0 - a) - 0.12 * stand * a;
+}
+
+// How much a sheet (`k`: there is one, how upright, how far its shadow falls) shades a point
+// `d` past its free edge, on the pages.
+fn shadow_of(d: f32, y: f32, k: vec4<f32>) -> f32 {
+    if (k.x < 0.5 || k.z < 0.5 || d < 0.0 || d > k.z || y < u.page.x || y > u.page.y) {
+        return 0.0;
+    }
+    return 0.22 * k.y * (1.0 - d / k.z);
 }
 
 struct Found {
@@ -135,22 +163,28 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     src = mix(p, src, strength);
     shade = mix(1.0, shade, strength);
 
-    // The turning sheet: its capture, squeezed to the width it shows at and lifted as it
-    // stands, writing and all, then curved with the pages like everything else.
-    let r = u.leaf_now;
-    if (u.leaf_on.x > 0.5 && src.x >= r.x && src.x < r.x + r.z && src.y >= r.y && src.y < r.y + r.w) {
-        let a = (src.x - r.x) / r.z;
-        let b = (src.y - r.y) / r.w;
-        let flat = u.leaf_flat.xy + vec2<f32>(a, b) * u.leaf_flat.zw;
-        let luv = (u.rect.xy + (flat + vec2<f32>(u.page.w)) * scale) / u.k.zw;
-        let lc = textureSampleLevel(leaf, smp, luv, 0.0);
-        // Darkest at the spine as it stands; a little shaded all over.
-        let stand = u.leaf_on.y;
-        let lit = 1.0 - (0.1 + 0.45 * stand) * (1.0 - a) - 0.12 * stand * a;
-        return vec4<f32>(lc.rgb * lit, lc.a);
+    // The sheets in the air: each squeezed to the width it shows at and lifted as it stands,
+    // writing and all, curved with the pages (the cover lies over them, flat). Shaded only as
+    // it stands, so lying flat it's the page it lifts off or lands on, exactly.
+    let sheet_at = select(src, p, u.recto_k.w > 0.5);
+    let r = u.recto_now;
+    if (u.recto_k.x > 0.5 && inside(sheet_at, r)) {
+        let a = (sheet_at - r.xy) / r.zw;
+        let flat = u.recto_flat.xy + a * u.recto_flat.zw;
+        let c = textureSampleLevel(leaf, smp, at_uv(flat), 0.0);
+        let k = select(shade, 1.0, u.recto_k.w > 0.5) * lit(a.x, u.recto_k.y);
+        return vec4<f32>(c.rgb * k, c.a);
     }
+    let v = u.verso_now;
+    if (u.verso_k.x > 0.5 && inside(src, v)) {
+        let a = (src - v.xy) / v.zw;
+        let flat = u.verso_flat.xy + a * u.verso_flat.zw;
+        let c = textureSampleLevel(backdrop, smp, at_uv(flat), 0.0);
+        return vec4<f32>(c.rgb * shade * lit(1.0 - a.x, u.verso_k.y), c.a);
+    }
+    // Their shadows, on the pages beside their free edges.
+    shade *= 1.0 - shadow_of(src.x - (r.x + r.z), src.y, u.recto_k) - shadow_of(v.x - src.x, src.y, u.verso_k);
 
-    let uv = (u.rect.xy + (src + vec2<f32>(u.page.w)) * scale) / u.k.zw;
-    let c = textureSampleLevel(backdrop, smp, uv, 0.0);
+    let c = textureSampleLevel(backdrop, smp, at_uv(src), 0.0);
     return vec4<f32>(c.rgb * shade, c.a);
 }

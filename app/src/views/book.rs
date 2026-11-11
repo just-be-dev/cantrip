@@ -102,6 +102,8 @@ struct Turn {
     kind: Kind,
     /// Frame-clock seconds it began; `None` until the next frame stamps it.
     began: Option<f64>,
+    /// It has been drawn landed: lying exactly as what it lands on, so it can go.
+    landed: bool,
 }
 
 /// The leaves turning, on the frame clock.
@@ -111,6 +113,8 @@ pub struct Leaves {
     now: f64,
     /// Drawing at all last frame, so the frame after the last leaf lands rebuilds too.
     drawing: bool,
+    /// Reduce Motion is on: leaves don't turn.
+    pub still: bool,
 }
 
 impl Leaves {
@@ -118,21 +122,32 @@ impl Leaves {
         if self.turns.len() >= MAX_LEAVES {
             self.turns.remove(0);
         }
-        self.turns.push(Turn { kind, began: None });
+        self.turns.push(Turn {
+            kind,
+            began: None,
+            landed: false,
+        });
     }
 
     /// Advances to `t`. `still` (Reduce Motion) is asked only when a turn is waiting to begin.
     /// True when the view must rebuild.
     pub fn frame(&mut self, t: f64, still: impl FnOnce() -> bool, tx: &mut Tx) -> bool {
         self.now = t;
-        if self.turns.iter().any(|turn| turn.began.is_none()) && still() {
-            self.turns.clear();
+        if self.turns.iter().any(|turn| turn.began.is_none()) {
+            self.still = still();
+            if self.still {
+                self.turns.clear();
+            }
         }
         for turn in &mut self.turns {
             turn.began.get_or_insert(t);
         }
-        self.turns
-            .retain(|turn| t - turn.began.unwrap_or(t) < turn.kind.duration());
+        // A turn that has run its course is drawn once landed, then goes: frames rarely fall
+        // on its last instant, and one caught short of it would jump to what it lands on.
+        self.turns.retain(|turn| !turn.landed);
+        for turn in &mut self.turns {
+            turn.landed = t - turn.began.unwrap_or(t) >= turn.kind.duration();
+        }
         let drawing = !self.turns.is_empty();
         if drawing {
             tx.wake_after(std::time::Duration::ZERO);
@@ -161,6 +176,25 @@ impl Leaves {
             .map(|(i, (kind, u))| (i, kind, u))
     }
 
+    /// The newest leaf in the air with its back up on the left: the shader draws it from the
+    /// left page itself, writing and all.
+    fn verso(&self) -> Option<(usize, Kind, f32)> {
+        self.progress()
+            .enumerate()
+            .filter(|(_, (kind, u))| *kind != Kind::Cover && !pose(*kind, *u).on_right)
+            .last()
+            .map(|(i, (kind, u))| (i, kind, u))
+    }
+
+    /// The line whose entry lies on the right under the leaves in the air: while a leaf turns
+    /// back, the one it was turned from, until it lands on it.
+    fn beneath(&self) -> Option<usize> {
+        self.turns.iter().find_map(|turn| match turn.kind {
+            Kind::Leaf { forward: false, from } => Some(from),
+            _ => None,
+        })
+    }
+
     /// How far the cover has swung, while it's opening.
     fn cover(&self) -> Option<f32> {
         self.progress()
@@ -174,7 +208,7 @@ impl Kind {
     fn flat(self) -> [f32; 4] {
         match self {
             Kind::Cover => [SPINE, 0.0, SPINE, BOOK_H],
-            Kind::Leaf { .. } => [SPINE, PAGE_INSET_Y, PAGE_W, PAGE_H],
+            Kind::Leaf { .. } => paper::page_rect(false),
         }
     }
 
@@ -221,13 +255,45 @@ fn pose(kind: Kind, u: f32) -> Pose {
     }
 }
 
-/// The face-up sheet in the air, for the compositor to draw foreshortened from its capture:
-/// where it lies flat, where it shows, and how upright it stands.
-pub(super) fn recto(s: &Cantrip) -> Option<([f32; 4], [f32; 4], f32)> {
-    let book = s.book.as_ref().filter(|_| s.session.is_none() && s.picker.is_none())?;
-    let (_, kind, u) = book.leaves.recto()?;
-    let pose = pose(kind, u);
-    Some((kind.flat(), pose.rect, pose.stand))
+/// A sheet in the air for the compositor to draw: where it lies flat (in the capture, or on
+/// the left page), where it shows now, how upright it stands, how far its shadow falls, and
+/// whether it's the cover (which lies over the pages' curve, not on it).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Sheet {
+    pub flat: [f32; 4],
+    pub now: [f32; 4],
+    pub stand: f32,
+    pub fall: f32,
+    pub cover: bool,
+}
+
+/// The sheets the compositor draws: the newest face up on the right (from its capture), and
+/// the newest leaf back up on the left (from the left page).
+pub(super) fn sheets(s: &Cantrip) -> (Option<Sheet>, Option<Sheet>) {
+    let Some(book) = s.book.as_ref().filter(|_| s.session.is_none() && s.picker.is_none())
+    else {
+        return (None, None);
+    };
+    let sheet = |(_, kind, u): (usize, Kind, f32), flat: [f32; 4]| {
+        let pose = pose(kind, u);
+        Sheet {
+            flat,
+            now: pose.rect,
+            stand: pose.stand,
+            fall: 34.0 * pose.theta.sin(),
+            cover: kind == Kind::Cover,
+        }
+    };
+    (
+        book.leaves.recto().map(|r| sheet(r, r.1.flat())),
+        book.leaves.verso().map(|v| sheet(v, paper::page_rect(true))),
+    )
+}
+
+/// Which of the right pages' pictures a line's entry is written on: its folio's.
+fn variant(r: &Row) -> usize {
+    let folio: usize = r.accessories.first().and_then(|n| n.parse().ok()).unwrap_or(1);
+    (folio.max(1) - 1) % paper::VARIANTS
 }
 
 fn ease(u: f32) -> f32 {
@@ -382,64 +448,61 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
     let Some(book) = &s.book else {
         return el();
     };
+    let look = Look {
+        still: book.leaves.still,
+        ..look
+    };
     let v = ink(look.p.theme);
     let tex = paper::textures(look.scale);
     let rows = s.rows();
-    let selected = rows.get(s.selection()).cloned();
-    let command = selected.as_ref().and_then(|r| command_of(s, r));
-    // While the cover swings over, the left half waits for it.
-    let left_shown = book
+    // The entry on the right: the highlighted one, unless a leaf turning back is still on its
+    // way to it.
+    let beneath = book
         .leaves
-        .cover()
-        .map_or(1.0, |u| ((u - 0.55) * 2.6).clamp(0.0, 1.0));
+        .beneath()
+        .filter(|line| *line < rows.len())
+        .unwrap_or(s.selection());
+    let shown = rows.get(beneath).cloned();
+    let command = shown.as_ref().and_then(|r| command_of(s, r));
+    let page_picture = |r: Option<&Row>| &tex.pages[r.map_or(0, variant)];
+    // While the cover swings over, the left side is bare desk; the cover lands as it.
+    let opening = book.leaves.cover().is_some();
 
-    // The open book, either side of the spine, and its shadow on the desk.
-    let half = |left: bool, key: &'static str| {
-        el().key(key)
-        .a11y_hidden()
-        .pin(Some(if left { 0.0 } else { SPINE }), Some(0.0), None, None)
-        .size(SPINE, BOOK_H)
-        .corners(if left {
-            [7.0, 0.0, 0.0, 7.0]
-        } else {
-            [0.0, 7.0, 7.0, 0.0]
-        })
-        .pixels(if left { &tex.left } else { &tex.right })
-        .box_shadow(Shadow {
-            x: 0.0,
-            y: 12.0,
-            blur: 24.0,
-            spread: -2.0,
-            color: Color::BLACK.alpha(0.7),
-            inset: false,
-        })
-        .box_shadow(Shadow {
-            x: 0.0,
-            y: 3.0,
-            blur: 4.0,
-            spread: 0.0,
-            color: Color::BLACK.alpha(0.5),
-            inset: false,
-        })
-    };
-    let recto = book.leaves.recto();
     let mut spread = el()
         .key("book")
         .role("group")
         .label("Grimoire")
         .size(BOOK_W, BOOK_H)
-        .child(half(false, "binding-right"))
-        .child(half(true, "binding-left").opacity(left_shown))
-        .child(leaves(&book.leaves, recto, true, &tex))
+        .child(binding(false, &tex, "binding-right"));
+    // Both boards before either page: their shadows on the desk lie under the paper.
+    if !opening {
+        spread = spread.child(binding(true, &tex, "binding-left"));
+    }
+    spread = spread.child(page_picture_at(false, page_picture(shown.as_ref()), "page-right"));
+    if !opening {
+        spread = spread.child(page_picture_at(true, &tex.page_left, "page-left"));
+    }
+    spread = spread
+        .child(leaves(&book.leaves, true, &tex))
+        // The index's ink seeps into the page once the cover has landed.
         .child(
             page(true)
-                .opacity(left_shown)
+                .opacity(if opening { 0.0 } else { 1.0 })
+                .opacity_motion(rune::Spring::new(0.7, 0.0))
                 .child(index_page(s, &rows, v, look.scale)),
         );
-    if let Some((_, kind, _)) = recto {
+    if let Some((_, kind, _)) = book.leaves.recto() {
         // The sheet turning, lying flat with its writing, for the compositor to capture and
-        // draw foreshortened as it turns (`warp`); then the right half again, over it.
-        // It comes and goes at once: a fade would leave a ghost of it lying flat.
+        // draw foreshortened as it turns (`warp`); then the right side again, over it. It
+        // comes and goes at once: a fade would leave a ghost of it lying flat.
+        let (face, picture) = match kind {
+            Kind::Cover => (None, &tex.cover),
+            Kind::Leaf { forward, from } => {
+                let line = if forward { from } else { s.selection() };
+                let r = rows.get(line);
+                (r, page_picture(r))
+            }
+        };
         spread = spread.child(
             el().key("turning")
                 .a11y_hidden()
@@ -448,25 +511,18 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
                 .size(BOOK_W, BOOK_H)
                 .transition(Transition::none())
                 .instant_changes()
-                .child(flat_recto(s, &rows, kind, v, &tex, look))
+                .child(flat_recto(s, kind, face, picture, v, look))
                 .child(warp::capture())
-                .child(
-                    el().pin(Some(SPINE), Some(0.0), None, None)
-                        .size(SPINE, BOOK_H)
-                        .pixels(&tex.right),
-                ),
+                .child(binding(false, &tex, "binding-right-again"))
+                .child(page_picture_at(false, page_picture(shown.as_ref()), "page-right-again")),
         );
     }
     let spread = spread
-        .child(page(false).child(entry_page("entry", selected.as_ref(), command, v, look)))
-        .child(leaves(&book.leaves, recto, false, &tex))
-        // Last: everything above, redrawn as it lies on curved pages. The pages settle into
-        // their curve as the cover lands.
-        .child(warp::slot(
-            book.leaves
-                .cover()
-                .map_or(1.0, |u| ((u - 0.55) / 0.45).clamp(0.0, 1.0)),
-        ));
+        .child(page(false).child(entry_page("entry", shown.as_ref(), command, v, look)))
+        .child(leaves(&book.leaves, false, &tex))
+        // Last: everything above, redrawn as it lies on curved pages, with the sheets in the
+        // air drawn turning over them.
+        .child(warp::slot(1.0));
     let spread = play(spread, look.intro.map(|intro| intro.row(0)));
     // Candlelight pooled on the desk round the book.
     col()
@@ -484,6 +540,61 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
             ],
         )
         .child(spread)
+}
+
+/// Its shadow on the desk, under a board.
+fn desk_shadows(el: El) -> El {
+    el.box_shadow(Shadow {
+        x: 0.0,
+        y: 12.0,
+        blur: 24.0,
+        spread: -2.0,
+        color: Color::BLACK.alpha(0.7),
+        inset: false,
+    })
+    .box_shadow(Shadow {
+        x: 0.0,
+        y: 3.0,
+        blur: 4.0,
+        spread: 0.0,
+        color: Color::BLACK.alpha(0.5),
+        inset: false,
+    })
+}
+
+/// The binding either side of the spine, lying on the desk. It comes and goes at once (the
+/// cover landing is it).
+fn binding(left: bool, tex: &paper::Textures, key: &'static str) -> El {
+    let half = el()
+        .key(key)
+        .a11y_hidden()
+        .pin(Some(if left { 0.0 } else { SPINE }), Some(0.0), None, None)
+        .size(SPINE, BOOK_H)
+        .transition(Transition::none())
+        .corners(if left {
+            [7.0, 0.0, 0.0, 7.0]
+        } else {
+            [0.0, 7.0, 7.0, 0.0]
+        })
+        .pixels(if left { &tex.left } else { &tex.right });
+    // Drawn again over a captured sheet, it already has its shadow.
+    if key.ends_with("-again") {
+        half
+    } else {
+        desk_shadows(half)
+    }
+}
+
+/// An open page's picture, where it lies.
+fn page_picture_at(left: bool, picture: &rune::Pixels, key: &'static str) -> El {
+    let [x, y, w, h] = paper::page_rect(left);
+    el().key(key)
+        .a11y_hidden()
+        .inert()
+        .pin(Some(x), Some(y), None, None)
+        .size(w, h)
+        .transition(Transition::none())
+        .pixels(picture)
 }
 
 /// Where a page's writing goes: over the open page painted in the binding.
@@ -720,7 +831,15 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
         .grow(1.0)
         .min_h(0.0)
         .gap(12.0)
-        .transition(Transition::opacity())
+        // Under Reduce Motion no leaf turns, and entries cross-fade; otherwise the leaf has
+        // already laid the new one down when it lands, and it swaps in at once.
+        .transition(if look.still {
+            Transition::opacity()
+        } else {
+            Transition::none()
+        })
+        // Its writing is all there the frame it is: no line fades in on its own.
+        .instant_changes()
         .child(
             row()
                 .w_full()
@@ -781,29 +900,28 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
 
 // MARK: Leaves
 
-/// The leaves in the air, over the spread. Rebuilt every frame while they turn; their changes
-/// land at once (the frame clock moves them, not springs). The cover, once past the spine,
-/// goes `under` the pages, which settle onto it. The `recto`, face up on the right, is drawn
-/// by the compositor from its capture (`flat_recto`); only its shadow is drawn here.
-fn leaves(
-    leaves: &Leaves,
-    recto: Option<(usize, Kind, f32)>,
-    under: bool,
-    tex: &paper::Textures,
-) -> El {
+/// The sheets in the air the compositor doesn't draw. Rebuilt every frame while they turn;
+/// their changes land at once (the frame clock moves them, not springs). The cover, once past
+/// the spine, goes `under` the pages, which settle onto it; its inside is the left side of the
+/// book itself, so it lands as it. The newest leaf either side is the compositor's (`sheets`),
+/// writing and shadow too; any others riffling past are blank.
+fn leaves(leaves: &Leaves, under: bool, tex: &paper::Textures) -> El {
     let mut layer = el()
         .key(if under { "leaves-under" } else { "leaves" })
         .a11y_hidden()
         .inert()
         .pin(Some(0.0), Some(0.0), None, None)
         .size(BOOK_W, BOOK_H)
-        .instant_changes();
+        // The frame clock moves them: their places, shading and shadows land each frame as
+        // drawn, or the shading lags behind and a sheet lands still shaded.
+        .instant_changes()
+        .motion(rune::Spring::NONE);
+    let drawn = [leaves.recto(), leaves.verso()].map(|t| t.map(|(i, _, _)| i));
     for (i, (kind, u)) in leaves.progress().enumerate() {
-        if under != (kind == Kind::Cover && u >= 0.5) {
+        if under != (kind == Kind::Cover && u >= 0.5) || drawn.contains(&Some(i)) {
             continue;
         }
-        let sheet = recto.is_none_or(|(r, _, _)| r != i);
-        layer = layer.child(leaf(i, kind, u, sheet, tex));
+        layer = layer.child(leaf(i, kind, u, tex));
     }
     layer
 }
@@ -812,10 +930,10 @@ fn leaves(
 /// turns away (forward) or toward (back), or the cover's tooled title.
 fn flat_recto(
     s: &Cantrip,
-    rows: &[Row],
     kind: Kind,
+    face: Option<&Row>,
+    picture: &rune::Pixels,
     v: Ink,
-    tex: &paper::Textures,
     look: Look,
 ) -> El {
     let [x, y, w, h] = kind.flat();
@@ -824,9 +942,10 @@ fn flat_recto(
         .a11y_hidden()
         .inert()
         .pin(Some(x), Some(y), None, None)
-        .size(w, h);
+        .size(w, h)
+        .pixels(picture);
     match kind {
-        Kind::Cover => sheet.pixels(&tex.cover).child(
+        Kind::Cover => sheet.child(
             col()
                 .pin(Some(0.0), Some(BOOK_H * 0.71), None, None)
                 .size(w, 44.0)
@@ -847,86 +966,85 @@ fn flat_recto(
                     ),
                 ),
         ),
-        Kind::Leaf { forward, from } => {
-            let line = if forward { from } else { s.selection() };
-            let face = rows
-                .get(line)
-                .map(|r| entry_page("leaf-entry", Some(r), command_of(s, r), v, look));
-            let sheet = sheet.pixels(&tex.leaf_right);
-            match face {
-                Some(face) => sheet.child(face),
-                None => sheet,
-            }
-        }
+        Kind::Leaf { .. } => match face {
+            // Written where the entry page writes it: its picture reaches past the page by the
+            // tattered margin above.
+            Some(r) => sheet.child(
+                el().pin(Some(0.0), Some(paper::PAGE_MARGIN), None, None)
+                    .size(PAGE_W, PAGE_H)
+                    .child(entry_page("leaf-entry", Some(r), command_of(s, r), v, look)),
+            ),
+            None => sheet,
+        },
     }
 }
 
-/// One leaf, `u` of the way over (`pose`), casting a shadow on the page it's leaving. Its
-/// `sheet` is drawn unless the compositor draws it.
-fn leaf(i: usize, kind: Kind, u: f32, sheet: bool, tex: &paper::Textures) -> El {
+/// A sheet `u` of the way over (`pose`) the compositor doesn't draw: the cover's inside (the
+/// left side of the book, binding and page), or a blank leaf riffling past.
+fn leaf(i: usize, kind: Kind, u: f32, tex: &paper::Textures) -> El {
     let pose = pose(kind, u);
     let [x, y, w, h] = pose.rect;
     let (on_right, stand) = (pose.on_right, pose.stand);
-    // Its shadow falls on the page beside its free edge.
-    let fall = 34.0 * pose.theta.sin();
-    let shadow = el()
-        .pin(
-            Some(if on_right { x + w } else { x - fall }),
-            Some(PAGE_INSET_Y),
-            None,
-            None,
-        )
-        .size(fall.max(0.5), PAGE_H)
+    // Shaded as it stands, darkest at the spine; as it was once it lies flat.
+    let (spine, free) = (
+        Color::BLACK.alpha(0.5 * stand),
+        Color::BLACK.alpha(0.12 * stand),
+    );
+    let light = el()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .linear_gradient(
             FRAC_PI_2,
             if on_right {
-                [
-                    (0.0, Color::BLACK.alpha(0.22 * stand)),
-                    (1.0, Color::BLACK.alpha(0.0)),
-                ]
+                [(0.0, spine), (1.0, free)]
             } else {
-                [
-                    (0.0, Color::BLACK.alpha(0.0)),
-                    (1.0, Color::BLACK.alpha(0.22 * stand)),
-                ]
+                [(0.0, free), (1.0, spine)]
             },
         );
-    let leaf = el()
-        .key(format!("leaf-{i}"))
+    let lifted = |el: El| {
+        el.box_shadow(Shadow {
+            x: if on_right { 6.0 } else { -6.0 } * stand,
+            y: 4.0 + 4.0 * stand,
+            blur: 14.0 * stand + 2.0,
+            spread: 0.0,
+            color: Color::BLACK.alpha(0.4 * stand),
+            inset: false,
+        })
+    };
+    let sheet = match (kind, on_right) {
+        (Kind::Cover, false) => {
+            // The left side of the book, squeezed to the width it shows at.
+            let (kx, ky) = (w / SPINE, h / BOOK_H);
+            let [px, py, pw, ph] = paper::page_rect(true);
+            desk_shadows(lifted(
+                el().pin(Some(x), Some(y), None, None)
+                    .size(w, h)
+                    .corners([7.0, 0.0, 0.0, 7.0])
+                    .pixels(&tex.left),
+            ))
+            .child(
+                el().pin(Some(px * kx), Some(py * ky), None, None)
+                    .size(pw * kx, ph * ky)
+                    .pixels(&tex.page_left),
+            )
+        }
+        (Kind::Cover, true) => lifted(
+            el().pin(Some(x), Some(y), None, None)
+                .size(w, h)
+                .pixels(&tex.cover),
+        ),
+        (Kind::Leaf { .. }, true) => lifted(
+            el().pin(Some(x), Some(y), None, None)
+                .size(w, h)
+                .pixels(&tex.pages[0]),
+        ),
+        (Kind::Leaf { .. }, false) => lifted(
+            el().pin(Some(x), Some(y), None, None)
+                .size(w, h)
+                .pixels(&tex.page_left),
+        ),
+    };
+    el().key(format!("leaf-{i}"))
         .pin(Some(0.0), Some(0.0), None, None)
         .size(BOOK_W, BOOK_H)
-        .child(shadow);
-    if !sheet {
-        return leaf;
-    }
-    let picture = match (kind, on_right) {
-        (Kind::Cover, true) => &tex.cover,
-        (Kind::Cover, false) => &tex.inside,
-        (Kind::Leaf { .. }, true) => &tex.leaf_right,
-        (Kind::Leaf { .. }, false) => &tex.leaf_left,
-    };
-    // Shaded as it stands, darkest at the spine. Its back is blank: nothing written to bend.
-    let shade = Color::BLACK.alpha(0.1 + 0.45 * stand);
-    let (from, to) = if on_right {
-        (shade, Color::BLACK.alpha(0.12 * stand))
-    } else {
-        (Color::BLACK.alpha(0.12 * stand), shade)
-    };
-    leaf.child(
-        el().pin(Some(x), Some(y), None, None)
-            .size(w, h)
-            .pixels(picture)
-            .box_shadow(Shadow {
-                x: if on_right { 6.0 } else { -6.0 } * stand,
-                y: 4.0 + 4.0 * stand,
-                blur: 14.0 * stand + 2.0,
-                spread: 0.0,
-                color: Color::BLACK.alpha(0.4 * stand),
-                inset: false,
-            })
-            .child(
-                el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                    .linear_gradient(FRAC_PI_2, [(0.0, from), (1.0, to)]),
-            ),
-    )
+        .child(sheet.child(light))
 }

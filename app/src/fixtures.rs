@@ -19,6 +19,7 @@ pub const SCENES: &[Scene] = &[
     ("grimoire-arcane", grimoire_arcane),
     ("grimoire-opening", grimoire_opening),
     ("grimoire-turning", grimoire_turning),
+    ("grimoire-turning-back", grimoire_turning_back),
     ("closing", closing),
     ("closing-arcane", closing_arcane),
     ("query", query),
@@ -242,6 +243,12 @@ fn grimoire_opening(s: &mut Cantrip) {
 fn grimoire_turning(s: &mut Cantrip) {
     grimoire(s);
     s.set_selection(3);
+}
+
+/// A leaf turning back, from the third entry to the second (render with `--at`/`--strip`).
+fn grimoire_turning_back(s: &mut Cantrip) {
+    grimoire(s);
+    s.set_selection(1);
 }
 
 /// Mid-exit: in Sigil the glass falls into a binding sigil (render it over time with

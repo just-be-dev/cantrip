@@ -60,6 +60,8 @@ struct Look {
     scale: f32,
     /// The entrance to play, after an opening.
     intro: Option<Intro>,
+    /// Reduce Motion is on, as far as the grimoire knows (`book::Leaves::still`).
+    still: bool,
 }
 
 /// The scroll viewport the results list in.
@@ -90,6 +92,7 @@ pub fn view(s: &Cantrip, cx: &mut Cx<Cantrip>) -> El {
         p: s.theme.palette(),
         scale: cx.env().scale,
         intro: Intro::new(s.intro).filter(|_| s.revealed),
+        still: false,
     };
     let p = look.p;
     let mut root = el()
