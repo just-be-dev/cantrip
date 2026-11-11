@@ -234,9 +234,43 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
           ...rows.map((r) => `  ${r.name.padEnd(width)}  ${r.owner.title} (${r.owner.kind})`),
           "",
           "Run one with `<name> --help`, or `cantrip <name> …`.",
+          "`cantrip spells` lists every spell in your grimoire; `cantrip enable|disable <name>` turns one on or off.",
           ""
         ].join("\n")
       }
+
+      /** `cantrip spells`: every grimoire entry and whether it's enabled. */
+      const spellsListing = Effect.gen(function*() {
+        const entries = yield* registry.entries
+        if (entries.length === 0) return "Your grimoire is empty.\n"
+        const width = Math.max(...entries.map((e) => e.id.length))
+        return [
+          `Spells in ${grimoire} (only enabled ones load):`,
+          "",
+          ...entries.map((e) => `  ${e.enabled ? "✓" : "·"} ${e.id.padEnd(width)}  ${e.enabled ? "" : "(disabled) "}${e.summary ?? ""}`),
+          "",
+          "Turn one on or off with `cantrip enable <name>` / `cantrip disable <name>`.",
+          ""
+        ].join("\n")
+      })
+
+      /** `cantrip enable|disable <name>`. */
+      const toggle = (c: Connection, name: string | undefined, enabled: boolean) =>
+        Effect.gen(function*() {
+          const verb = enabled ? "enable" : "disable"
+          if (name === undefined || name.startsWith("-")) {
+            out(c, 2, `Usage: cantrip ${verb} <name>. \`cantrip spells\` lists them.\n`)
+            return 2
+          }
+          const id = name.replace(/\.(ts|tsx|js|mjs)$/, "").replace(/\/$/, "")
+          const result = yield* registry.setEnabled(id, enabled)
+          if (result === "unknown") {
+            out(c, 2, `cantrip: no spell named "${id}" in your grimoire. \`cantrip spells\` lists them.\n`)
+            return 2
+          }
+          out(c, 1, result === "changed" ? `${enabled ? "Enabled" : "Disabled"} ${id}.\n` : `${id} is already ${verb}d.\n`)
+          return 0
+        })
 
       /** Runs one request to completion and reports the exit code. */
       const invoke = (c: Connection, request: RunRequest, stdin: Queue.Queue<Uint8Array, Cause.Done>) =>
@@ -256,6 +290,11 @@ export class Commands extends Context.Service<Commands, {}>()("cantrip/host/Comm
               out(c, 1, "Cantrip will hand daemons over on its next restart (for the next minute).\n")
               return 0
             }
+            if (first === "spells") {
+              out(c, 1, yield* spellsListing)
+              return 0
+            }
+            if (first === "enable" || first === "disable") return yield* toggle(c, rest[0], first === "enable")
             name = first
             args = rest
           }

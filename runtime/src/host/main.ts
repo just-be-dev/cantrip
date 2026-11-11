@@ -27,6 +27,7 @@ const main = Effect.gen(function*() {
   const wire = yield* Wire
   const sessions = yield* Sessions
   const daemons = yield* Daemons
+  const registry = yield* Registry
   yield* Effect.logInfo(`Cantrip host ready (bun ${Bun.version})`)
   if (Bun.semver.order(Bun.version, MinimumBun) < 0) {
     yield* Effect.logWarning(`bun ${Bun.version} is older than ${MinimumBun}; update bun or set "bun" in config.json`)
@@ -38,6 +39,8 @@ const main = Effect.gen(function*() {
         return daemons.handle(message)
       case "handoff":
         return daemons.handoff
+      case "setEnabled":
+        return Effect.asVoid(registry.setEnabled(message.entry, message.enabled))
       default:
         return sessions.handle(message)
     }

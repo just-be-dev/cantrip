@@ -213,10 +213,33 @@ fn tome() -> Vec<WireCommand> {
     all
 }
 
+/// Spells in the grimoire that are disabled until enabled in the book.
+pub fn dormant() -> Vec<WireEntry> {
+    let entry = |id: &str, title: &str, summary: &str| WireEntry {
+        id: id.into(),
+        title: title.into(),
+        enabled: false,
+        summary: Some(summary.into()),
+    };
+    vec![
+        entry(
+            "insomnia",
+            "Insomnia",
+            "Keeps the Mac awake, lid closed too, with `pmset -a disablesleep`.",
+        ),
+        entry(
+            "claude-usage",
+            "Claude Usage",
+            "A daemon: how much of your Claude plan you have left, as a ring in the menu bar.",
+        ),
+    ]
+}
+
 /// The grimoire as a book, open on its third entry.
 fn grimoire(s: &mut Cantrip) {
     root(s);
     s.commands = tome();
+    s.entries = dormant();
     s.open_book();
     if let Some(book) = &mut s.book {
         // Opened long ago: no cover in the air.
@@ -236,6 +259,7 @@ fn grimoire_arcane(s: &mut Cantrip) {
 fn grimoire_opening(s: &mut Cantrip) {
     root(s);
     s.commands = tome();
+    s.entries = dormant();
     s.open_book();
 }
 

@@ -37,6 +37,16 @@ launch Cantrip creates it and copies in the examples from
 [`grimoire/`](grimoire). Edit them or add files there, and
 they reload as soon as you save.
 
+Spells are **disabled until you enable them**, the examples included, and so
+is any file you add. A disabled spell stays in the grimoire but isn't loaded:
+no commands, no menu bar item, no CLI command. **Open Grimoire** lists every
+spell; disabled ones are written faintly, and selecting one (↵, or a click)
+enables it. ⌘K → Disable Spell turns one off again. In a terminal,
+`cantrip spells` lists them and `cantrip enable|disable <name>` toggles one.
+The enabled ones are listed in the grimoire's `spells.json`
+(`{ "enabled": ["uuid"] }`), which you can also edit by hand. A grimoire
+from before this had everything in it enabled when it was first upgraded.
+
 The installed app turns on **Launch at Login** the first time it runs. Toggle
 it from the 🪄 menu bar icon. The menu also has:
 
@@ -214,11 +224,13 @@ export const battery = Daemon.summon({
 - **Shared services.** `layer` (optional) is built once in the daemon's scope;
   `run`, menu actions, and the daemon's CLI command all get what it provides.
 
-Two real ones ship in [`grimoire/`](grimoire): **claude-usage.ts** (what's left
-of your Claude plan limits, as a ring) and **insomnia/** (keeps the Mac awake
-with the lid closed; see the comment at the top of `index.ts` for the one-time
-sudoers rule). The grimoire is only seeded on first launch, so copy them into
-`~/.config/cantrip/grimoire` to use them.
+Two real ones ship in [`grimoire/`](grimoire), disabled like every spell until
+you enable them in the Grimoire (or `cantrip enable <name>`): **claude-usage.ts** (what's
+left of your Claude plan limits, as a ring) and **insomnia/** (keeps the Mac
+awake with the lid closed; see the comment at the top of `index.ts` for the
+one-time sudoers rule). Disabling Insomnia stops it for good, so it restores
+normal sleep. The grimoire is only seeded on first launch, so if yours
+predates them, copy them into `~/.config/cantrip/grimoire`.
 
 ## CLI commands
 
@@ -298,7 +310,7 @@ Environment variables, for development:
 ```text
 app/        Rust crate on Rune: panel, hotkey, host bridge, views, menu bar (src/)
 runtime/    the `cantrip` package: SDK (src/sdk) and bun host (src/host)
-grimoire/   example spells and daemons, copied to ~/.config/cantrip/grimoire on first run
+grimoire/   example spells and daemons, copied (disabled) to ~/.config/cantrip/grimoire on first run
 scripts/    bundle.sh builds Cantrip.app; release.sh publishes it to the website
 site/       the website, cantrip.just-be.dev (Astro), where Cantrip is downloaded from
 alchemy.run.ts  deploys the website and its R2 bucket of releases (projects.just-be.dev)

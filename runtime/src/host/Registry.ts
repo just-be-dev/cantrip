@@ -6,6 +6,7 @@
  *   uuid.ts            → every exported Spell becomes a command, every Daemon a menu bar item
  *   github/index.ts    → a directory spell, for spells with their own files
  *   _helpers.ts        → names starting with `_` or `.` are skipped
+ *   spells.json        → { "enabled": ["uuid"] }: the entries that load. Everything else is disabled
  *   node_modules/      → managed by Cantrip: links `cantrip` and `effect` to the host
  */
 import * as NodePath from "node:path"
@@ -24,7 +25,7 @@ import * as Stream from "effect/Stream"
 import * as SubscriptionRef from "effect/SubscriptionRef"
 import * as Daemon from "../sdk/Daemon.ts"
 import * as Spell from "../sdk/Spell.ts"
-import type { WireCommand } from "./Protocol.ts"
+import type { WireCommand, WireEntry } from "./Protocol.ts"
 import { Wire } from "./Wire.ts"
 
 export const runtimeDir = NodePath.resolve(import.meta.dir, "../..")
@@ -60,6 +61,9 @@ export interface LoadedDaemon {
   readonly daemon: Daemon.Daemon
 }
 
+/** Where the grimoire records which of its entries are enabled. */
+const stateFile = "spells.json"
+
 const fileStamp = (info: FileSystem.File.Info) =>
   `${Option.match(info.mtime, { onNone: () => 0, onSome: (d) => d.getTime() })}:${info.size}`
 
@@ -74,6 +78,14 @@ export class Registry extends Context.Service<Registry, {
   readonly commands: SubscriptionRef.SubscriptionRef<ReadonlyMap<string, LoadedCommand>>
   /** Re-import changed spells and send the new command list to the app. */
   readonly reload: Effect.Effect<void>
+  /** Every entry in the grimoire, enabled or not, as of the last reload. */
+  readonly entries: Effect.Effect<ReadonlyArray<WireEntry>>
+  /**
+   * Turn an entry on or off, then reload. Entries are disabled until enabled, and a
+   * disabled entry isn't imported at all:
+   * its spells, daemons (stopped with `stopReason: "removed"`), and commands go away.
+   */
+  readonly setEnabled: (id: string, enabled: boolean) => Effect.Effect<"changed" | "unchanged" | "unknown">
 }>()("cantrip/host/Registry") {
   static readonly layer = Layer.effect(
     Registry,
@@ -87,6 +99,7 @@ export class Registry extends Context.Service<Registry, {
       const spells = yield* Ref.make(new Map<string, LoadedSpell>())
       const daemons = yield* SubscriptionRef.make<ReadonlyMap<string, LoadedDaemon>>(new Map())
       const commands = yield* SubscriptionRef.make<ReadonlyMap<string, LoadedCommand>>(new Map())
+      const lastEntries = yield* Ref.make<ReadonlyArray<WireEntry>>([])
       const lock = yield* Semaphore.make(1)
       let generation = 0
 
@@ -105,6 +118,8 @@ export class Registry extends Context.Service<Registry, {
             yield* fs.copy(path.join(examples, name), path.join(dir, name))
           }
         }
+        // Spells are disabled until enabled in the Grimoire.
+        yield* fs.writeFileString(path.join(dir, stateFile), `${JSON.stringify({ enabled: [] }, null, 2)}\n`)
         yield* Effect.logInfo(`Created ${dir}`)
       })
 
@@ -214,7 +229,9 @@ export class Registry extends Context.Service<Registry, {
         const nextSpells = new Map<string, LoadedSpell>()
         const nextDaemons = new Map<string, LoadedDaemon>()
         const errors: Array<string> = []
-        const { found, helpers } = yield* entries()
+        const { found: all, helpers } = yield* entries()
+        const enabled = yield* readEnabled
+        const found = all.filter((entry) => enabled.has(entry.id))
         const helpersChanged = helpers !== helpersStamp
         if (helpersChanged && helpersStamp !== undefined) {
           for (const name of yield* fs.readDirectory(dir)) {
@@ -272,7 +289,23 @@ export class Registry extends Context.Service<Registry, {
           keywords: spell.keywords ?? [],
           mode: spell.mode ?? "view"
         }))
-        yield* wire.send({ type: "commands", commands: wireCommands, errors })
+        const wireEntries: Array<WireEntry> = []
+        for (const entry of all) {
+          const on = enabled.has(entry.id)
+          const exports = on ? Object.values(modules.get(entry.id)?.exports ?? {}) : []
+          // A daemon-only entry goes by its daemon's title; anything else by its name.
+          const onlyDaemon = exports.some(Daemon.isDaemon) && !exports.some(Spell.isSpell)
+            ? exports.find(Daemon.isDaemon)
+            : undefined
+          wireEntries.push({
+            id: entry.id,
+            title: onlyDaemon?.title ?? titleOf(entry.id),
+            enabled: on,
+            summary: yield* summaryOf(entry.file)
+          })
+        }
+        yield* Ref.set(lastEntries, wireEntries)
+        yield* wire.send({ type: "commands", commands: wireCommands, entries: wireEntries, errors })
         yield* Effect.logInfo(
           `Loaded ${wireCommands.length} spell(s), ${nextDaemons.size} daemon(s), and ${nextCommands.size} command(s) from ${dir}${
             errors.length ? `, ${errors.length} failed` : ""
@@ -284,7 +317,61 @@ export class Registry extends Context.Service<Registry, {
         Effect.withSpan("Registry.reload")
       )
 
+      /**
+       * The enabled entry ids from `spells.json`. Everything else is disabled, so a new
+       * spell stays off until it's enabled. A missing or broken file enables nothing.
+       */
+      const readEnabled = fs.readFileString(path.join(dir, stateFile)).pipe(
+        Effect.map((text) => {
+          const parsed: unknown = JSON.parse(text)
+          const list = typeof parsed === "object" && parsed !== null ? (parsed as { enabled?: unknown }).enabled : []
+          return new Set(Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [])
+        }),
+        Effect.catchCause(() => Effect.succeed(new Set<string>()))
+      )
+
+      /** Write the enabled set, keeping any other keys a user put in the file. */
+      const writeEnabled = Effect.fn("Registry.writeEnabled")(function*(enabled: ReadonlySet<string>) {
+        const file = path.join(dir, stateFile)
+        const current = yield* fs.readFileString(file).pipe(
+          Effect.map((text) => JSON.parse(text) as unknown),
+          Effect.map((json) => typeof json === "object" && json !== null && !Array.isArray(json) ? json : {}),
+          Effect.orElseSucceed(() => ({}))
+        )
+        const next = { ...current, enabled: [...enabled].sort() }
+        yield* fs.writeFileString(`${file}.tmp`, `${JSON.stringify(next, null, 2)}\n`)
+        yield* fs.rename(`${file}.tmp`, file)
+      })
+
+      const setEnabled = (id: string, enabled: boolean) =>
+        Effect.gen(function*() {
+          const known = (yield* entries()).found.some((entry) => entry.id === id)
+          if (!known) return "unknown" as const
+          const current = yield* readEnabled
+          if (current.has(id) === enabled) return "unchanged" as const
+          if (enabled) current.add(id)
+          else current.delete(id)
+          yield* writeEnabled(current)
+          yield* Effect.logInfo(`${enabled ? "Enabled" : "Disabled"} ${id}`)
+          yield* reload
+          return "changed" as const
+        }).pipe(
+          Effect.catchCause((cause) => Effect.as(Effect.logError(`Could not change ${id}`, cause), "unchanged" as const))
+        )
+
+      /**
+       * A grimoire from before spells were disabled by default has no `spells.json`:
+       * enable everything already in it, so nothing it had disappears.
+       */
+      const migrate = Effect.fn("Registry.migrate")(function*() {
+        if (yield* fs.exists(path.join(dir, stateFile))) return
+        const { found } = yield* entries()
+        yield* writeEnabled(new Set(found.map((entry) => entry.id)))
+        yield* Effect.logInfo(`Enabled the ${found.length} spell(s) already in ${dir}; new ones start disabled`)
+      })
+
       yield* seed().pipe(Effect.catchCause((cause) => Effect.logError("Could not create the grimoire", cause)))
+      yield* migrate().pipe(Effect.catchCause((cause) => Effect.logError("Could not record enabled spells", cause)))
       yield* link().pipe(Effect.catchCause((cause) => Effect.logError("Could not link spell modules", cause)))
       yield* reload
 
@@ -302,11 +389,23 @@ export class Registry extends Context.Service<Registry, {
         get: (id) => Effect.map(Ref.get(spells), (map) => map.get(id)),
         daemons,
         commands,
-        reload
+        reload,
+        entries: Ref.get(lastEntries),
+        setEnabled
       })
     })
   )
 }
+
+/** `claude-usage` → `Claude Usage`. */
+const titleOf = (id: string) =>
+  id.split(/[-_\s]+/).filter(Boolean).map((word) => word[0]!.toUpperCase() + word.slice(1)).join(" ")
+
+/** The first line of a spell file's leading `//` comment. */
+const summaryOf = (file: string) =>
+  Effect.promise(() => Bun.file(file).text().catch(() => "")).pipe(
+    Effect.map((text) => (text.split("\n").find((line) => line.startsWith("//")) ?? "").replace(/^\/\/\s*/, "") || undefined)
+  )
 
 const spellsTsconfig = {
   compilerOptions: {

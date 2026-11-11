@@ -24,7 +24,7 @@ use super::palette::srgb;
 use super::theme::Theme;
 use super::{Look, RESULTS, play};
 use crate::icons::{self, Icon};
-use crate::protocol::{CommandMode, WireCommand};
+use crate::protocol::{CommandMode, WireCommand, WireEntry};
 use crate::store::{Cantrip, Row, ScrollWatch, row_key};
 
 /// Headings and illuminated initials: a calligraphic hand.
@@ -304,56 +304,140 @@ fn ease(u: f32) -> f32 {
 
 // MARK: Rows
 
-/// The index: every spell, alphabetical; filtered by `query`, best match first. Each row's
-/// only accessory is its folio, its place in the whole book.
-pub fn rows(commands: &[WireCommand], query: &str) -> Vec<Row> {
+/// The index: every spell in the grimoire, alphabetical; filtered by `query`, best match
+/// first. Each row's only accessory is its folio, its place in the whole book.
+///
+/// An enabled entry is written as its spells (a daemon-only one as itself); a disabled one,
+/// which isn't loaded, as one dormant line (`row_state`) that ↵ enables.
+pub fn rows(commands: &[WireCommand], entries: &[WireEntry], query: &str) -> Vec<Row> {
     use crate::store::{ActionItem, ActionKindItem};
-    let mut sorted: Vec<&WireCommand> = commands.iter().collect();
-    sorted.sort_by_key(|c| c.title.to_lowercase());
-    let row = |(i, c): (usize, &WireCommand)| Row {
-        id: format!("spell:{}", c.id),
-        title: c.title.clone(),
-        subtitle: c.subtitle.clone(),
-        icon: Icon::parse(Some(c.icon.as_deref().unwrap_or("sparkles"))),
-        accessories: vec![(i + 1).to_string()],
-        actions: vec![
+    let entry_of = |id: &str| id.split(':').next().unwrap_or(id).to_string();
+    let reveal = |id: &str| {
+        ActionItem::new(
+            "reveal",
+            "Show in Finder",
+            "folder",
+            ActionKindItem::RevealInFinder(
+                crate::config::Config::spell_file(id)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        )
+    };
+    let copy_id = |id: &str| {
+        ActionItem::new(
+            "copy-id",
+            "Copy Spell ID",
+            "doc.on.doc",
+            ActionKindItem::CopyText(id.to_string()),
+        )
+    };
+    let toggle = |e: &WireEntry, enabled: bool| {
+        ActionItem::new(
+            if enabled { "enable" } else { "disable" },
+            if enabled {
+                "Enable Spell"
+            } else {
+                "Disable Spell"
+            },
+            if enabled { "sparkles" } else { "moon.zzz" },
+            ActionKindItem::SetEnabled {
+                entry: e.id.clone(),
+                title: e.title.clone(),
+                enabled,
+            },
+        )
+    };
+    // (row, the words a query matches)
+    let mut lines: Vec<(Row, Vec<String>)> = Vec::new();
+    for c in commands {
+        let mut actions = vec![
             ActionItem::new(
                 "run",
                 "Cast Spell",
                 "sparkles",
                 ActionKindItem::RunSpell(c.clone()),
             ),
-            ActionItem::new(
-                "reveal",
-                "Show in Finder",
-                "folder",
-                ActionKindItem::RevealInFinder(
-                    crate::config::Config::spell_file(&c.id)
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-            ),
-            ActionItem::new(
-                "copy-id",
-                "Copy Spell ID",
-                "doc.on.doc",
-                ActionKindItem::CopyText(c.id.clone()),
-            ),
-        ],
-    };
-    let all = sorted.into_iter().enumerate();
-    if query.is_empty() {
-        return all.map(row).collect();
+            reveal(&c.id),
+            copy_id(&c.id),
+        ];
+        if let Some(e) = entries.iter().find(|e| e.id == entry_of(&c.id)) {
+            actions.push(toggle(e, false));
+        }
+        let mut words = vec![c.title.clone(), c.subtitle.clone().unwrap_or_default()];
+        words.extend(c.keywords.iter().cloned());
+        lines.push((
+            Row {
+                id: format!("spell:{}", c.id),
+                title: c.title.clone(),
+                subtitle: c.subtitle.clone(),
+                icon: Icon::parse(Some(c.icon.as_deref().unwrap_or("sparkles"))),
+                accessories: Vec::new(),
+                actions,
+            },
+            words,
+        ));
     }
-    let mut scored: Vec<(Row, i64)> = all
-        .filter_map(|(i, c)| {
-            let mut fields = vec![c.title.as_str(), c.subtitle.as_deref().unwrap_or("")];
-            fields.extend(c.keywords.iter().map(String::as_str));
-            crate::fuzzy::score_fields(query, &fields).map(|s| (row((i, c)), s))
+    for e in entries {
+        if e.enabled && commands.iter().any(|c| entry_of(&c.id) == e.id) {
+            continue;
+        }
+        let actions = if e.enabled {
+            vec![reveal(&e.id), copy_id(&e.id), toggle(e, false)]
+        } else {
+            vec![toggle(e, true), reveal(&e.id)]
+        };
+        let mut words = vec![e.title.clone(), e.id.clone(), e.summary.clone().unwrap_or_default()];
+        words.push(if e.enabled { "enabled" } else { "disabled" }.into());
+        lines.push((
+            Row {
+                id: format!("entry:{}", e.id),
+                title: e.title.clone(),
+                subtitle: e.summary.clone(),
+                icon: Icon::parse(Some(if e.enabled {
+                    "menubar.rectangle"
+                } else {
+                    "moon.zzz"
+                })),
+                accessories: Vec::new(),
+                actions,
+            },
+            words,
+        ));
+    }
+    lines.sort_by_key(|(r, _)| r.title.to_lowercase());
+    for (i, (r, _)) in lines.iter_mut().enumerate() {
+        r.accessories = vec![(i + 1).to_string()];
+    }
+    if query.is_empty() {
+        return lines.into_iter().map(|(r, _)| r).collect();
+    }
+    let mut scored: Vec<(Row, i64)> = lines
+        .into_iter()
+        .filter_map(|(r, words)| {
+            let fields: Vec<&str> = words.iter().map(String::as_str).collect();
+            crate::fuzzy::score_fields(query, &fields).map(|s| (r, s))
         })
         .collect();
     scored.sort_by_key(|s| std::cmp::Reverse(s.1));
     scored.into_iter().map(|(r, _)| r).collect()
+}
+
+/// What a line of the index is: a spell to cast, a daemon keeping watch, or a dormant entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowState {
+    Spell,
+    Daemon,
+    Dormant,
+}
+
+pub fn row_state(r: &Row) -> RowState {
+    use crate::store::ActionKindItem;
+    match r.actions.first().map(|a| &a.kind) {
+        Some(ActionKindItem::SetEnabled { enabled: true, .. }) => RowState::Dormant,
+        Some(ActionKindItem::RunSpell(_)) => RowState::Spell,
+        _ => RowState::Daemon,
+    }
 }
 
 // MARK: Inks
@@ -691,12 +775,22 @@ fn index_page(s: &Cantrip, rows: &[Row], v: Ink, scale: f32) -> El {
 }
 
 fn index_line(r: &Row, index: usize, selected: bool, v: Ink, scale: f32) -> El {
-    let ink = if selected { v.rubric } else { v.ink };
+    let dormant = row_state(r) == RowState::Dormant;
+    // A disabled spell is written faintly until it's enabled.
+    let ink = match (selected, dormant) {
+        (true, _) => v.rubric,
+        (false, true) => v.ink.alpha(0.45),
+        (false, false) => v.ink,
+    };
     let n = r.accessories.first().cloned().unwrap_or_default();
     row()
         .key(row_key(index))
         .role("option")
-        .label(r.title.clone())
+        .label(if dormant {
+            format!("{} (disabled)", r.title)
+        } else {
+            r.title.clone()
+        })
         .checked(selected)
         .w_full()
         .h(INDEX_ROW_H)
@@ -728,7 +822,7 @@ fn index_line(r: &Row, index: usize, selected: bool, v: Ink, scale: f32) -> El {
         })
         .child(
             text(r.title.clone())
-                .font(if selected {
+                .font(if selected || dormant {
                     italic(15.0)
                 } else {
                     book_face(15.0)
@@ -803,8 +897,11 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
                 .border(1.0, v.gilt.alpha(0.55)),
         )
         .child(text(initial).font(hand(44.0)).color(v.letter));
-    let mode = match command.map(|c| c.mode) {
-        Some(CommandMode::NoView) => "cast in a single breath",
+    let state = row_state(r);
+    let mode = match (state, command.map(|c| c.mode)) {
+        (RowState::Dormant, _) => "disabled",
+        (RowState::Daemon, _) => "keeps watch in the menu bar",
+        (_, Some(CommandMode::NoView)) => "cast in a single breath",
         _ => "opens its own pages",
     };
     let title = col()
@@ -869,6 +966,24 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
                 .color(v.ink.alpha(0.6))
                 .wrap()
                 .max_lines(2),
+        );
+    }
+    if state == RowState::Dormant {
+        entry = entry.child(spacer()).child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .child(icons::view(
+                    &Icon::Symbol("sparkles".into()),
+                    12.0,
+                    v.rubric.alpha(0.8),
+                    look.scale,
+                ))
+                .child(
+                    text("Press ↵ to enable it.")
+                        .font(italic(13.5))
+                        .color(v.rubric.alpha(0.85)),
+                ),
         );
     }
     if let Some(c) = command {

@@ -455,6 +455,7 @@ fn reload_reports_back_when_the_spells_arrive() {
     );
     let message = HostMessage::Commands {
         commands: fixtures::commands(),
+        entries: Vec::new(),
         errors: Vec::new(),
     };
     rt.update(move |s, tx| s.receive(message, tx));
@@ -473,6 +474,7 @@ fn new_spells_show_up_in_the_search_as_they_load() {
     assert!(!titles(&rt).contains(&"Hello".to_string()));
     let message = HostMessage::Commands {
         commands: fixtures::commands(),
+        entries: Vec::new(),
         errors: vec!["broken.ts: nope".into()],
     };
     rt.update(move |s, tx| s.receive(message, tx));
@@ -769,6 +771,63 @@ fn the_grimoire_opens_as_a_book_to_leaf_through_and_cast_from() {
     assert!(rt.state.book.is_none());
     assert_eq!(rt.state.query(), "open grimoire");
     assert_eq!(rt.state.field.text, "open grimoire");
+}
+
+#[test]
+fn disabled_spells_are_enabled_from_the_book() {
+    let mut rt = runtime(|s| {
+        fixtures::root(s);
+        s.entries = fixtures::dormant();
+    });
+    assert!(
+        !titles(&rt).contains(&"Insomnia".to_string()),
+        "a disabled spell isn't in the root search"
+    );
+    rt.update(|s, _| s.open_book());
+    settle(&mut rt);
+    assert_eq!(
+        titles(&rt),
+        [
+            "Claude Usage",
+            "Generate UUID",
+            "Git Branches",
+            "Hello",
+            "Insomnia",
+            "Party Mode"
+        ],
+        "the book lists every spell, enabled or not"
+    );
+    type_text(&mut rt, "insomnia");
+    assert_eq!(titles(&rt), ["Insomnia"]);
+    assert_eq!(
+        crate::views::book::row_state(&rt.state.rows()[0]),
+        crate::views::book::RowState::Dormant
+    );
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert_eq!(
+        log(&mut rt),
+        [r#"{"type":"setEnabled","entry":"insomnia","enabled":true}"#],
+        "↵ enables it, and the bar stays on the book"
+    );
+    assert!(rt.state.book.is_some());
+    assert_eq!(
+        rt.state.toast.as_ref().map(|t| t.title.as_str()),
+        Some("Insomnia enabled")
+    );
+    assert_eq!(
+        crate::views::book::row_state(&rt.state.rows()[0]),
+        crate::views::book::RowState::Daemon,
+        "a daemon-only spell, once enabled, keeps watch"
+    );
+    // The last action disables it again.
+    let disable = rt.state.rows()[0].actions.last().cloned().unwrap();
+    assert_eq!(disable.title, "Disable Spell");
+    rt.update(move |s, tx| s.perform(disable, tx));
+    assert_eq!(
+        log(&mut rt),
+        [r#"{"type":"setEnabled","entry":"insomnia","enabled":false}"#]
+    );
 }
 
 #[test]

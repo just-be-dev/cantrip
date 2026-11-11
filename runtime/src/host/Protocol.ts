@@ -31,10 +31,12 @@ export const Reload = Schema.Struct({ type: Schema.tag("reload") })
 export const MenuSelect = Schema.Struct({ type: Schema.tag("menu"), daemon: Schema.String, item: Schema.String })
 /** The app is about to restart the host (not quit): daemons should hand their state over. */
 export const Handoff = Schema.Struct({ type: Schema.tag("handoff") })
+/** Turn a grimoire entry on or off (selecting it in the Grimoire). */
+export const SetEnabled = Schema.Struct({ type: Schema.tag("setEnabled"), entry: Schema.String, enabled: Schema.Boolean })
 /** The user opened a daemon's menu. */
 export const MenuOpened = Schema.Struct({ type: Schema.tag("menuOpened"), daemon: Schema.String })
 
-export const Inbound = Schema.Union([Run, Query, InvokeAction, Pop, Close, Reload, MenuSelect, MenuOpened, Handoff]).pipe(
+export const Inbound = Schema.Union([Run, Query, InvokeAction, Pop, Close, Reload, MenuSelect, MenuOpened, Handoff, SetEnabled]).pipe(
   Schema.toTaggedUnion("type")
 )
 export type Inbound = typeof Inbound.Type
@@ -50,6 +52,18 @@ export interface WireCommand {
   readonly icon?: string | undefined
   readonly keywords: ReadonlyArray<string>
   readonly mode: "view" | "no-view"
+}
+
+/**
+ * A file or directory spell in the grimoire, enabled or not. Spells are disabled until
+ * enabled; a disabled entry isn't imported, so it has no commands.
+ */
+export interface WireEntry {
+  readonly id: string
+  readonly title: string
+  readonly enabled: boolean
+  /** The first line of its leading comment. */
+  readonly summary?: string | undefined
 }
 
 export interface WireAction {
@@ -136,7 +150,13 @@ export interface WireStatusItem {
 }
 
 export type Outbound =
-  | { readonly type: "commands"; readonly commands: ReadonlyArray<WireCommand>; readonly errors: ReadonlyArray<string> }
+  | {
+    readonly type: "commands"
+    readonly commands: ReadonlyArray<WireCommand>
+    /** Every grimoire entry, enabled or not. */
+    readonly entries: ReadonlyArray<WireEntry>
+    readonly errors: ReadonlyArray<string>
+  }
   /**
    * Show `view` at `depth`: replace it if the app has a view there, append it
    * if `depth` is one past the top, otherwise ignore it (that view is gone).

@@ -17,6 +17,17 @@ pub struct WireCommand {
     pub mode: CommandMode,
 }
 
+/// A file or directory spell in the grimoire, enabled or not. Spells are disabled until
+/// enabled in the Grimoire; a disabled one isn't loaded, so it has no commands.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct WireEntry {
+    pub id: String,
+    pub title: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 pub enum CommandMode {
     #[serde(rename = "view")]
@@ -206,6 +217,9 @@ pub struct WireStatusItem {
 pub enum HostMessage {
     Commands {
         commands: Vec<WireCommand>,
+        /// Every grimoire entry, enabled or not.
+        #[serde(default)]
+        entries: Vec<WireEntry>,
         errors: Vec<String>,
     },
     Render {
@@ -294,6 +308,11 @@ pub enum AppMessage {
         daemon: String,
     },
     Handoff,
+    /// Turn a grimoire entry on or off.
+    SetEnabled {
+        entry: String,
+        enabled: bool,
+    },
 }
 
 impl AppMessage {

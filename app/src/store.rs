@@ -65,6 +65,12 @@ pub enum ActionKindItem {
     CopyText(String),
     Builtin(Builtin),
     DaemonMenu { daemon: String, item: WireMenuItem },
+    /// Turn a grimoire entry on or off (`views::book`).
+    SetEnabled {
+        entry: String,
+        title: String,
+        enabled: bool,
+    },
 }
 
 impl ActionItem {
@@ -232,6 +238,8 @@ impl Session {
 
 pub struct Cantrip {
     pub commands: Vec<WireCommand>,
+    /// Every spell in the grimoire, enabled or not (`views::book` lists them all).
+    pub entries: Vec<WireEntry>,
     pub load_errors: Vec<String>,
     pub apps: Vec<AppEntry>,
     /// Each running daemon's menu bar item, by daemon id. Its menu actions are searchable too.
@@ -295,6 +303,7 @@ impl Cantrip {
         let theme = services.load_theme().unwrap_or_default();
         Cantrip {
             commands: Vec::new(),
+            entries: Vec::new(),
             load_errors: Vec::new(),
             apps: Vec::new(),
             daemons: BTreeMap::new(),
@@ -496,7 +505,7 @@ impl Cantrip {
                 return theme_rows(&picker.query, picker.before);
             }
             if let Some(book) = &self.book {
-                return crate::views::book::rows(&self.commands, &book.query);
+                return crate::views::book::rows(&self.commands, &self.entries, &book.query);
             }
             return self.root_rows();
         };
@@ -714,6 +723,24 @@ impl Cantrip {
                     self.bump_usage(&row.id);
                 }
                 self.choose_menu_item(&daemon, &item, tx);
+            }
+            ActionKindItem::SetEnabled {
+                entry,
+                title,
+                enabled,
+            } => {
+                // Shown at once; the host's next spell list confirms it.
+                if let Some(e) = self.entries.iter_mut().find(|e| e.id == entry) {
+                    e.enabled = enabled;
+                }
+                self.changed();
+                self.services.send(AppMessage::SetEnabled { entry, enabled });
+                let title = if enabled {
+                    format!("{title} enabled")
+                } else {
+                    format!("{title} disabled")
+                };
+                self.show_toast(ToastStyle::Success, &title, None, tx);
             }
         }
     }
@@ -1253,9 +1280,14 @@ impl Cantrip {
 
     pub fn receive(&mut self, message: HostMessage, tx: &mut Tx) {
         match message {
-            HostMessage::Commands { commands, errors } => {
+            HostMessage::Commands {
+                commands,
+                entries,
+                errors,
+            } => {
                 let count = commands.len();
                 self.commands = commands;
+                self.entries = entries;
                 self.load_errors = errors.clone();
                 self.changed();
                 if !errors.is_empty() {
