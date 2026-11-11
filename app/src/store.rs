@@ -1289,6 +1289,10 @@ impl Cantrip {
                 self.commands = commands;
                 self.entries = entries;
                 self.load_errors = errors.clone();
+                // Spells were saved: the book reads their incantations afresh.
+                if let Some(book) = &self.book {
+                    book.forget_sources();
+                }
                 self.changed();
                 if !errors.is_empty() {
                     let title = format!("{} spell(s) failed to load", errors.len());

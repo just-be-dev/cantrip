@@ -2,13 +2,13 @@
 //!
 //! The book view puts an effect slot (`slot`) over the spread. Rune copies everything drawn
 //! before it into a backdrop, and the shader redraws that through the pages' surface, so the
-//! writing bends with the paper. While a sheet turns face up on the right, the view first
-//! draws it lying flat, writing and all, under a second slot (`capture`) whose backdrop the
-//! compositor copies into a texture it keeps, then draws the page beneath over it again; the
-//! shader draws the capture squeezed to the width the sheet shows at, so its writing turns
-//! with it (Rune scales elements only evenly). A leaf back up on the left is drawn from the
-//! left page in the backdrop itself, writing and all. Lying flat, each sheet is exactly the
-//! page it lifts off or lands on, so a turn neither starts nor ends with a jump.
+//! writing bends with the paper. While a sheet turns, the view first draws each face in the
+//! air lying flat, writing and all (the face up on the right, the back up on the left), under
+//! a slot of its own (`capture`) whose backdrop the compositor copies into a texture it keeps,
+//! then draws the page beneath over it again; the shader draws each capture squeezed to the
+//! width the sheet shows at, so its writing turns with it (Rune scales elements only evenly).
+//! Lying flat, each face is exactly the page it lifts off or lands on, so a turn neither
+//! starts nor ends with a jump.
 //!
 //! `Warp` is the app's compositor: frames without the book draw as Rune would, and backdrops
 //! are only copied while it's up. Headless renders go through it too.
@@ -22,7 +22,8 @@ use crate::store::Cantrip;
 
 /// The book's effect slot tags.
 const CURVE: u32 = 0xB00C;
-const CAPTURE: u32 = 0xB00D;
+const CAPTURE_RIGHT: u32 = 0xB00D;
+const CAPTURE_LEFT: u32 = 0xB00E;
 
 /// How far the light rakes across the pages' slopes.
 const RAKE: f32 = 0.9;
@@ -44,9 +45,14 @@ pub fn slot(strength: f32) -> El {
     over_book(CURVE, "page-curve").effect_data([strength.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
 }
 
-/// The slot that captures the turning sheet drawn flat before it. It draws nothing.
-pub fn capture() -> El {
-    over_book(CAPTURE, "page-capture")
+/// The slot that captures the face of the turning sheet drawn flat before it, on the `left`
+/// or the right. It draws nothing.
+pub fn capture(left: bool) -> El {
+    if left {
+        over_book(CAPTURE_LEFT, "page-capture-left")
+    } else {
+        over_book(CAPTURE_RIGHT, "page-capture")
+    }
 }
 
 /// The turning sheet as last captured.
@@ -73,7 +79,8 @@ struct Gpu {
     sampler: wgpu::Sampler,
     /// Bound for the sheet when none is turning.
     blank: wgpu::TextureView,
-    captured: Option<Captured>,
+    /// The faces last captured: right, left.
+    captured: [Option<Captured>; 2],
 }
 
 #[derive(Default)]
@@ -98,7 +105,7 @@ impl Compositor<Cantrip> for Warp {
         }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let (recto, verso) = super::sheets(&f.rt.state);
-        let mut captured = false;
+        let mut captured = [false; 2];
         let clear = f.rt.clear_color();
         f.ui.prepare(device, queue, &mut f.rt.text.atlas, &f.rt.instances, size);
         f.ui.draw_with_backdrop(f.encoder, f.target, clear, &mut |phase, site| {
@@ -106,12 +113,14 @@ impl Compositor<Cantrip> for Warp {
                 return;
             };
             match (site.mark, phase) {
-                (CAPTURE, EffectPhase::Backdrop(encoder)) => {
-                    gpu.capture(device, encoder, site, backdrop);
-                    captured = true;
+                (CAPTURE_RIGHT | CAPTURE_LEFT, EffectPhase::Backdrop(encoder)) => {
+                    let side = usize::from(site.mark == CAPTURE_LEFT);
+                    gpu.capture(device, encoder, site, backdrop, side);
+                    captured[side] = true;
                 }
                 (CURVE, EffectPhase::Draw(pass)) => {
-                    let recto = recto.filter(|_| captured);
+                    let recto = recto.filter(|_| captured[0]);
+                    let verso = verso.filter(|_| captured[1]);
                     gpu.curve(device, queue, pass, site, backdrop, recto, verso);
                 }
                 _ => {}
@@ -153,6 +162,7 @@ impl Gpu {
                     count: None,
                 },
                 texture(3),
+                texture(4),
             ],
         });
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -195,7 +205,7 @@ impl Gpu {
             uniforms,
             sampler,
             blank,
-            captured: None,
+            captured: [None, None],
         }
     }
 
@@ -267,17 +277,17 @@ impl Gpu {
         &self.pipes[self.pipes.len() - 1]
     }
 
-    /// Copies the backdrop at the capture slot (the turning sheet, lying flat) into a texture
-    /// of its own, while the pass is closed.
+    /// Copies the backdrop at a capture slot (a face of the turning sheet, lying flat) into
+    /// the texture kept for its `side` (0 right, 1 left), while the pass is closed.
     fn capture(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         site: &EffectSite<'_>,
         backdrop: &wgpu::TextureView,
+        side: usize,
     ) {
-        let fits = self
-            .captured
+        let fits = self.captured[side]
             .as_ref()
             .is_some_and(|c| c.size == site.size && c.format == site.format);
         if !fits {
@@ -298,7 +308,7 @@ impl Gpu {
                     view_formats: &[],
                 })
                 .create_view(&Default::default());
-            self.captured = Some(Captured {
+            self.captured[side] = Some(Captured {
                 size: site.size,
                 format: site.format,
                 view,
@@ -313,7 +323,7 @@ impl Gpu {
             }],
         });
         let blit = self.pipes(device, site.format).blit.clone();
-        let Some(captured) = &self.captured else {
+        let Some(captured) = &self.captured[side] else {
             return;
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -338,7 +348,8 @@ impl Gpu {
     }
 
     /// Redraws the backdrop at the curve slot through the pages' surface, and the sheets in
-    /// the air over it: the captured `recto`, and the `verso` from the backdrop.
+    /// the air over it, each from its capture: the `recto` face up on the right, the `verso`
+    /// back up on the left.
     #[allow(clippy::too_many_arguments)]
     fn curve(
         &mut self,
@@ -381,10 +392,11 @@ impl Gpu {
         values.extend(sheet(verso).into_iter().flatten());
         let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
         queue.write_buffer(&self.uniforms, 0, &bytes);
-        let sheet = match (&self.captured, recto) {
-            (Some(c), Some(_)) if c.format == site.format => &c.view,
+        let face = |side: usize, on: bool| match &self.captured[side] {
+            Some(c) if on && c.format == site.format => &c.view,
             _ => &self.blank,
         };
+        let (right, left) = (face(0, recto.is_some()), face(1, verso.is_some()));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("page curve"),
             layout: &self.curve_layout,
@@ -403,7 +415,11 @@ impl Gpu {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(sheet),
+                    resource: wgpu::BindingResource::TextureView(right),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(left),
                 },
             ],
         });

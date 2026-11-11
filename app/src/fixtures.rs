@@ -235,7 +235,42 @@ pub fn dormant() -> Vec<WireEntry> {
     ]
 }
 
-/// The grimoire as a book, open on its third entry.
+/// What a spell's file might say, for the book's incantation pages (a headless run reads no
+/// files): the repository's own examples where they exist.
+fn incantation(c: &WireCommand) -> String {
+    match c.id.as_str() {
+        "hello.ts:hello" => include_str!("../../grimoire/hello.ts").replace("export default", "export const hello ="),
+        "uuid.ts:uuid" => include_str!("../../grimoire/uuid.ts").replace("export default", "export const uuid ="),
+        _ => {
+            let name = c.id.split(':').next_back().unwrap_or("spell");
+            let subtitle = c.subtitle.clone().unwrap_or_default();
+            let view = if c.mode == CommandMode::View {
+                "  run: Ui.list({\n    placeholder: \"Search…\",\n    items: []\n  })"
+            } else {
+                "  run: Effect.gen(function*() {\n    yield* Ui.hud(\"Done\")\n  })"
+            };
+            format!(
+                "// {subtitle}\nimport * as Effect from \"effect/Effect\"\nimport {{ Spell, Ui }} from \"cantrip\"\n\n// {}.\nexport const {name} = Spell.make({{\n  title: \"{}\",\n  subtitle: \"{subtitle}\",\n  icon: \"{}\",\n  keywords: [{}],\n{view}\n}})\n",
+                c.title,
+                c.title,
+                c.icon.clone().unwrap_or_default(),
+                c.keywords.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", "),
+            )
+        }
+    }
+}
+
+/// The book's incantations, as its fixtures' files would have them.
+fn write_incantations(s: &mut Cantrip) {
+    let Some(book) = &s.book else { return };
+    for c in &s.commands {
+        book.set_source(&c.id, &incantation(c));
+    }
+    book.set_source("insomnia", include_str!("../../grimoire/insomnia/index.ts"));
+    book.set_source("claude-usage", include_str!("../../grimoire/claude-usage.ts"));
+}
+
+/// The grimoire as a book, open on its third spell.
 fn grimoire(s: &mut Cantrip) {
     root(s);
     s.commands = tome();
@@ -246,6 +281,7 @@ fn grimoire(s: &mut Cantrip) {
         *book = crate::views::book::Book::default();
         book.selection = 2;
     }
+    write_incantations(s);
     s.changed();
 }
 
@@ -261,6 +297,7 @@ fn grimoire_opening(s: &mut Cantrip) {
     s.commands = tome();
     s.entries = dormant();
     s.open_book();
+    write_incantations(s);
 }
 
 /// A leaf turning forward, from the third entry to the fourth (render with `--at`/`--strip`).

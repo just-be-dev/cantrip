@@ -713,20 +713,30 @@ fn the_grimoire_opens_as_a_book_to_leaf_through_and_cast_from() {
         "the book starts with its own empty query"
     );
     assert_eq!(rt.state.placeholder(), "Search the grimoire…");
-    assert_eq!(rt.state.section(), None, "the index heads its own page");
+    assert_eq!(rt.state.section(), None, "the index heads its own column");
+    assert!(rt.find("index-column").is_some(), "beside the book");
     assert_eq!(
         titles(&rt),
         ["Generate UUID", "Git Branches", "Hello", "Party Mode"],
         "every spell, alphabetical, and nothing else"
     );
     assert_eq!(rt.state.rows()[2].accessories, ["3"], "each with its folio");
-    assert!(rt.find("entry-spell:uuid.ts:uuid").is_some());
+    assert!(rt.find("entry-spell:uuid.ts:uuid").is_some(), "its entry on the left");
+    assert!(rt.find("source-spell:uuid.ts:uuid").is_some(), "its incantation on the right");
 
-    // The arrows turn the pages.
+    // The arrows turn the pages; the spread beneath is the one turned from until they land.
     press(&mut rt, Key::Down);
     press(&mut rt, Key::Down);
     assert_eq!(rt.state.selection(), 2);
+    assert!(rt.find("entry-spell:uuid.ts:uuid").is_some(), "still in the air");
+    rt.update(|s, tx| {
+        for t in [10.0, 11.0, 11.05] {
+            s.animate_book(t, tx);
+        }
+    });
+    settle(&mut rt);
     assert!(rt.find("entry-spell:hello.ts:hello").is_some());
+    assert!(rt.find("source-spell:hello.ts:hello").is_some());
 
     // Typing searches it; folios keep their place in the book.
     type_text(&mut rt, "party");
@@ -897,12 +907,43 @@ fn a_turning_leaf_is_captured_with_its_writing_for_the_compositor() {
     );
     assert!(rt.find("page-capture").is_some());
     assert!(
-        rt.find("leaf-entry-spell:uuid.ts:uuid").is_some(),
-        "with the entry it turns away written on it"
+        rt.find("leaf-source-spell:uuid.ts:uuid").is_some(),
+        "its face: the incantation of the spread it closes"
+    );
+    // Past the spine, its back is up.
+    rt.update(|s, tx| {
+        s.animate_book(10.35, tx);
+    });
+    settle(&mut rt);
+    assert!(rt.find("page-capture-left").is_some());
+    assert!(
+        rt.find("leaf-entry-spell:git.ts:branches").is_some(),
+        "its back: the entry of the spread it opens"
     );
     rt.update(|s, tx| {
         s.animate_book(11.0, tx);
+        s.animate_book(11.05, tx);
     });
     settle(&mut rt);
     assert!(rt.find("turning").is_none(), "gone once it lands");
+}
+
+#[test]
+fn an_incantation_is_copied_out_from_its_export() {
+    use crate::views::book::excerpt;
+    let file = "import x from \"y\"\n\nconst helper = 1\n\n// Says hello.\n/** Twice. */\nexport const hello = Spell.make({\n\ttitle: \"Hi\"\n})\n\nexport default Spell.make({})\n";
+    assert_eq!(
+        excerpt("greet:hello", file).lines().take(4).collect::<Vec<_>>(),
+        ["// Says hello.", "/** Twice. */", "export const hello = Spell.make({", "  title: \"Hi\""],
+        "from the comments over it, tabs as spaces"
+    );
+    assert_eq!(
+        excerpt("greet", file).lines().next(),
+        Some("export default Spell.make({})")
+    );
+    assert_eq!(
+        excerpt("greet:missing", file).lines().next(),
+        Some("import x from \"y\""),
+        "the whole file when the export can't be found"
+    );
 }

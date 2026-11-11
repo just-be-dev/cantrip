@@ -1,9 +1,11 @@
-//! The grimoire, bound as an ancient book (`Builtin::OpenGrimoire`): a two-page spread in the
-//! bar's content. The left page is the index, every spell with its folio, filtered by the
-//! field; the right page is the highlighted spell's entry, under an illuminated initial.
+//! The grimoire, bound as an ancient book (`Builtin::OpenGrimoire`), in the bar's content, with
+//! its index beside it on the desk: every spell with its folio, filtered by the field. Each
+//! spell has a spread of its own: its entry on the left page, under an illuminated initial,
+//! and its incantation (the code in its file) on the right.
 //!
-//! Opening the book swings its cover over from the right; moving the highlight turns a leaf,
-//! forward going down the index and back going up. Leaves are drawn on the frame clock
+//! Opening the book swings its cover over from the right; moving through the index turns its
+//! leaves, forward going down and back going up. A leaf between two spreads carries the
+//! earlier one's incantation on its face and the later one's entry on its back. Leaves are drawn on the frame clock
 //! (`Leaves::frame`, from `AppSpec::poll`), so headless renders repeat; Reduce Motion turns
 //! none and the entry only cross-fades.
 //!
@@ -32,8 +34,8 @@ const HAND: Family = Family::Named("Luminari, Apple Chancery, Iowan Old Style, G
 /// The text: an old-style book face.
 const BOOK: Family = Family::Named("Baskerville, Iowan Old Style, Palatino, Georgia");
 
-/// The binding, centred in the content: two boards meeting at the spine.
-const BOOK_W: f32 = 740.0;
+/// The binding, beside the index: two boards meeting at the spine.
+const BOOK_W: f32 = 572.0;
 const BOOK_H: f32 = 352.0;
 /// The open pages, inside the boards and the edges of the pages beneath them.
 const PAGE_INSET_X: f32 = 20.0;
@@ -42,8 +44,11 @@ const PAGE_W: f32 = BOOK_W / 2.0 - PAGE_INSET_X;
 const PAGE_H: f32 = BOOK_H - PAGE_INSET_Y - 15.0;
 const SPINE: f32 = BOOK_W / 2.0;
 
+/// The index's width, and the space between it and the book.
+const INDEX_W: f32 = 158.0;
+const INDEX_GAP: f32 = 12.0;
 /// One line of the index.
-const INDEX_ROW_H: f32 = 27.0;
+const INDEX_ROW_H: f32 = 28.0;
 /// Space above the first line and below the last, inside the index's scroll.
 const INDEX_PAD: f32 = crate::views::LIST_PAD;
 
@@ -61,12 +66,14 @@ pub fn index_span(index: usize) -> (f32, f32) {
 
 // MARK: State
 
-/// The book while it's open: its own query and highlight, and the leaves in the air.
+/// The book while it's open: its own query and highlight, the leaves in the air, and the
+/// incantations read so far, by spell (`Book::source`).
 #[derive(Clone, Debug, Default)]
 pub struct Book {
     pub query: String,
     pub selection: usize,
     pub leaves: Leaves,
+    sources: std::cell::RefCell<std::collections::HashMap<String, Option<std::rc::Rc<str>>>>,
 }
 
 impl Book {
@@ -82,7 +89,8 @@ impl Book {
         if index != self.selection {
             self.leaves.push(Kind::Leaf {
                 forward: index > self.selection,
-                from: self.selection,
+                lo: index.min(self.selection),
+                hi: index.max(self.selection),
             });
         }
         self.selection = index;
@@ -93,8 +101,9 @@ impl Book {
 enum Kind {
     /// The front cover, swinging open from the right.
     Cover,
-    /// A page, forward (right to left) or back, as the highlight moved from line `from`.
-    Leaf { forward: bool, from: usize },
+    /// The leaf between the spreads of lines `lo` and `hi`, turning forward (right to left) or
+    /// back.
+    Leaf { forward: bool, lo: usize, hi: usize },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -186,13 +195,16 @@ impl Leaves {
             .map(|(i, (kind, u))| (i, kind, u))
     }
 
-    /// The line whose entry lies on the right under the leaves in the air: while a leaf turns
-    /// back, the one it was turned from, until it lands on it.
-    fn beneath(&self) -> Option<usize> {
-        self.turns.iter().find_map(|turn| match turn.kind {
-            Kind::Leaf { forward: false, from } => Some(from),
-            _ => None,
-        })
+    /// The lines whose pages lie open beneath the leaves in the air: the earliest spread's
+    /// left page and the latest's right.
+    fn beneath(&self) -> Option<(usize, usize)> {
+        self.turns
+            .iter()
+            .filter_map(|turn| match turn.kind {
+                Kind::Leaf { lo, hi, .. } => Some((lo, hi)),
+                Kind::Cover => None,
+            })
+            .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
     }
 
     /// How far the cover has swung, while it's opening.
@@ -270,7 +282,10 @@ pub(super) struct Sheet {
 /// The sheets the compositor draws: the newest face up on the right (from its capture), and
 /// the newest leaf back up on the left (from the left page).
 pub(super) fn sheets(s: &Cantrip) -> (Option<Sheet>, Option<Sheet>) {
-    let Some(book) = s.book.as_ref().filter(|_| s.session.is_none() && s.picker.is_none())
+    let Some(book) = s
+        .book
+        .as_ref()
+        .filter(|_| s.session.is_none() && s.picker.is_none())
     else {
         return (None, None);
     };
@@ -286,14 +301,23 @@ pub(super) fn sheets(s: &Cantrip) -> (Option<Sheet>, Option<Sheet>) {
     };
     (
         book.leaves.recto().map(|r| sheet(r, r.1.flat())),
-        book.leaves.verso().map(|v| sheet(v, paper::page_rect(true))),
+        book.leaves
+            .verso()
+            .map(|v| sheet(v, paper::page_rect(true))),
     )
 }
 
-/// Which of the right pages' pictures a line's entry is written on: its folio's.
-fn variant(r: &Row) -> usize {
-    let folio: usize = r.accessories.first().and_then(|n| n.parse().ok()).unwrap_or(1);
+/// Which pictures a line's spread is written on: its folio's, a different one either side.
+fn variant_right(r: Option<&Row>) -> usize {
+    let folio: usize = r
+        .and_then(|r| r.accessories.first())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1);
     (folio.max(1) - 1) % paper::VARIANTS
+}
+
+fn variant_left(r: Option<&Row>) -> usize {
+    (variant_right(r) + 3) % paper::VARIANTS
 }
 
 fn ease(u: f32) -> f32 {
@@ -519,6 +543,72 @@ fn flourish(v: Ink, width: f32) -> El {
         .child(line(-FRAC_PI_2))
 }
 
+// MARK: Incantations
+
+/// The part of a spell's file worth reading on its page: from the comments over its export
+/// (`id` is `file` for a default export, `file:name` for a named one) to as far as fits.
+pub fn excerpt(id: &str, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let name = id.split_once(':').map(|(_, name)| name);
+    let defines = |l: &str| match name {
+        Some(name) => [
+            format!("export const {name} "),
+            format!("export const {name}="),
+            format!("export function {name}("),
+            format!("export const {name}:"),
+        ]
+        .iter()
+        .any(|p| l.starts_with(p.as_str())),
+        None => l.starts_with("export default"),
+    };
+    let mut start = lines.iter().position(|l| defines(l)).unwrap_or(0);
+    // Its comments come with it.
+    while start > 0 {
+        let above = lines[start - 1].trim_start();
+        if above.starts_with("//") || above.starts_with('*') || above.starts_with("/*") {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    lines[start..]
+        .iter()
+        .take(MAX_SOURCE_LINES)
+        .map(|l| l.replace('\t', "  "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// At most this many lines of a spell are copied out; the page shows what fits.
+const MAX_SOURCE_LINES: usize = 60;
+
+impl Book {
+    /// Spell `id`'s incantation as its page shows it (`excerpt`), read from its file the first
+    /// time it's asked for when `live` (headless runs only have what `set_source` gave).
+    pub fn source(&self, id: &str, live: bool) -> Option<std::rc::Rc<str>> {
+        if let Some(found) = self.sources.borrow().get(id) {
+            return found.clone();
+        }
+        let found = live
+            .then(|| std::fs::read_to_string(crate::config::Config::spell_file(id)).ok())
+            .flatten()
+            .map(|text| std::rc::Rc::from(excerpt(id, &text)));
+        self.sources.borrow_mut().insert(id.into(), found.clone());
+        found
+    }
+
+    /// Spell `id`'s file holds `text`.
+    pub fn set_source(&self, id: &str, text: &str) {
+        let found = Some(std::rc::Rc::from(excerpt(id, text)));
+        self.sources.borrow_mut().insert(id.into(), found);
+    }
+
+    /// Spells' files changed: read them again when next shown.
+    pub fn forget_sources(&self) {
+        self.sources.borrow_mut().clear();
+    }
+}
+
 // MARK: The spread
 
 /// The spell a line of the index is.
@@ -526,6 +616,36 @@ fn command_of<'a>(s: &'a Cantrip, r: &Row) -> Option<&'a WireCommand> {
     s.commands
         .iter()
         .find(|c| r.id.strip_prefix("spell:") == Some(c.id.as_str()))
+}
+
+/// What a page is: the entry (left) or the incantation (right) of a line of the index.
+#[derive(Clone, Copy)]
+struct Writing<'a> {
+    s: &'a Cantrip,
+    book: &'a Book,
+    rows: &'a [Row],
+    v: Ink,
+    look: Look,
+}
+
+impl Writing<'_> {
+    /// The left page of `line`'s spread: its entry, under an illuminated initial.
+    fn entry(&self, key: &str, line: usize) -> El {
+        let r = self.rows.get(line);
+        entry_page(key, r, r.and_then(|r| command_of(self.s, r)), self.v, self.look)
+    }
+
+    /// The right page of `line`'s spread: its incantation, as written in its file. A line
+    /// that isn't a loaded spell (a daemon, a disabled entry) is its entry's file.
+    fn source(&self, key: &str, line: usize) -> El {
+        let r = self.rows.get(line);
+        let id = r.and_then(|r| match command_of(self.s, r) {
+            Some(c) => Some(c.id.as_str()),
+            None => r.id.strip_prefix("entry:"),
+        });
+        let text = id.and_then(|id| self.book.source(id, self.s.services.live));
+        source_page(key, r, id, text.as_deref(), self.v)
+    }
 }
 
 pub(super) fn view(s: &Cantrip, look: Look) -> El {
@@ -539,16 +659,23 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
     let v = ink(look.p.theme);
     let tex = paper::textures(look.scale);
     let rows = s.rows();
-    // The entry on the right: the highlighted one, unless a leaf turning back is still on its
-    // way to it.
-    let beneath = book
+    let write = Writing {
+        s,
+        book,
+        rows: &rows,
+        v,
+        look,
+    };
+    // The spread open beneath the leaves in the air: the entry of the first spell they turn
+    // from or to on the left, the incantation of the last on the right. At rest, both are the
+    // highlighted spell's.
+    let (lo, hi) = book
         .leaves
         .beneath()
-        .filter(|line| *line < rows.len())
-        .unwrap_or(s.selection());
-    let shown = rows.get(beneath).cloned();
-    let command = shown.as_ref().and_then(|r| command_of(s, r));
-    let page_picture = |r: Option<&Row>| &tex.pages[r.map_or(0, variant)];
+        .filter(|(_, hi)| *hi < rows.len())
+        .unwrap_or((s.selection(), s.selection()));
+    let left_picture = |line: usize| &tex.pages_left[variant_left(rows.get(line))];
+    let right_picture = |line: usize| &tex.pages_right[variant_right(rows.get(line))];
     // While the cover swings over, the left side is bare desk; the cover lands as it.
     let opening = book.leaves.cover().is_some();
 
@@ -562,67 +689,100 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
     if !opening {
         spread = spread.child(binding(true, &tex, "binding-left"));
     }
-    spread = spread.child(page_picture_at(false, page_picture(shown.as_ref()), "page-right"));
+    spread = spread.child(page_picture_at(false, right_picture(hi), "page-right"));
     if !opening {
-        spread = spread.child(page_picture_at(true, &tex.page_left, "page-left"));
+        spread = spread.child(page_picture_at(true, left_picture(lo), "page-left"));
     }
-    spread = spread
-        .child(leaves(&book.leaves, true, &tex))
-        // The index's ink seeps into the page once the cover has landed.
+    spread = spread.child(leaves(
+        &book.leaves,
+        true,
+        &tex,
+        left_picture(s.selection()),
+    ));
+    // Each face of a sheet in the air, lying flat with its writing, for the compositor to
+    // capture and draw foreshortened as it turns (`warp`); then the page beneath again, over
+    // it. They come and go at once: a fade would leave a ghost lying flat.
+    let mut faces = el()
+        .key("turning")
+        .a11y_hidden()
+        .inert()
+        .pin(Some(0.0), Some(0.0), None, None)
+        .size(BOOK_W, BOOK_H)
+        .transition(Transition::none())
+        .instant_changes();
+    let mut turning = false;
+    if let Some((_, kind, _)) = book.leaves.recto() {
+        // A leaf's face is the incantation of the spread it closes.
+        let face = match kind {
+            Kind::Cover => flat_face(Kind::Cover.flat(), &tex.cover, Some(cover_title())),
+            Kind::Leaf { lo, .. } => flat_face(
+                kind.flat(),
+                right_picture(lo),
+                Some(write.source("leaf-source", lo)),
+            ),
+        };
+        faces = faces
+            .child(face)
+            .child(warp::capture(false))
+            .child(binding(false, &tex, "binding-right-again"))
+            .child(page_picture_at(false, right_picture(hi), "page-right-again"));
+        turning = true;
+    }
+    if let Some((_, Kind::Leaf { hi: back, .. }, _)) = book.leaves.verso() {
+        // Its back is the entry of the spread it opens.
+        faces = faces
+            .child(flat_face(
+                paper::page_rect(true),
+                left_picture(back),
+                Some(write.entry("leaf-entry", back)),
+            ))
+            .child(warp::capture(true))
+            .child(binding(true, &tex, "binding-left-again"))
+            .child(page_picture_at(true, left_picture(lo), "page-left-again"));
+        turning = true;
+    }
+    if turning {
+        spread = spread.child(faces);
+    }
+    let spread = spread
+        // The entry's ink seeps into the page once the cover has landed.
         .child(
             page(true)
                 .opacity(if opening { 0.0 } else { 1.0 })
                 .opacity_motion(rune::Spring::new(0.7, 0.0))
-                .child(index_page(s, &rows, v, look.scale)),
-        );
-    if let Some((_, kind, _)) = book.leaves.recto() {
-        // The sheet turning, lying flat with its writing, for the compositor to capture and
-        // draw foreshortened as it turns (`warp`); then the right side again, over it. It
-        // comes and goes at once: a fade would leave a ghost of it lying flat.
-        let (face, picture) = match kind {
-            Kind::Cover => (None, &tex.cover),
-            Kind::Leaf { forward, from } => {
-                let line = if forward { from } else { s.selection() };
-                let r = rows.get(line);
-                (r, page_picture(r))
-            }
-        };
-        spread = spread.child(
-            el().key("turning")
-                .a11y_hidden()
-                .inert()
-                .pin(Some(0.0), Some(0.0), None, None)
-                .size(BOOK_W, BOOK_H)
-                .transition(Transition::none())
-                .instant_changes()
-                .child(flat_recto(s, kind, face, picture, v, look))
-                .child(warp::capture())
-                .child(binding(false, &tex, "binding-right-again"))
-                .child(page_picture_at(false, page_picture(shown.as_ref()), "page-right-again")),
-        );
-    }
-    let spread = spread
-        .child(page(false).child(entry_page("entry", shown.as_ref(), command, v, look)))
-        .child(leaves(&book.leaves, false, &tex))
+                .child(write.entry("entry", lo)),
+        )
+        .child(page(false).child(write.source("source", hi)))
+        .child(leaves(
+            &book.leaves,
+            false,
+            &tex,
+            left_picture(s.selection()),
+        ))
         // Last: everything above, redrawn as it lies on curved pages, with the sheets in the
         // air drawn turning over them.
         .child(warp::slot(1.0));
     let spread = play(spread, look.intro.map(|intro| intro.row(0)));
-    // Candlelight pooled on the desk round the book.
-    col()
+    // The index beside the book on the desk, in candlelight.
+    row()
         .key("grimoire")
         .w_full()
         .h_full()
         .center()
+        .gap(INDEX_GAP)
         .radial_gradient(
-            [0.5, 0.3],
-            [520.0, 300.0],
+            [0.62, 0.3],
+            [480.0, 300.0],
             [
                 (0.0, srgb(1.0, 0.72, 0.36, 0.16)),
                 (0.6, srgb(1.0, 0.62, 0.30, 0.05)),
                 (1.0, srgb(1.0, 0.6, 0.3, 0.0)),
             ],
         )
+        .child(play(
+            index(s, &rows, look),
+            look.intro.map(|intro| intro.row(1)),
+        ))
         .child(spread)
 }
 
@@ -684,7 +844,7 @@ fn page_picture_at(left: bool, picture: &rune::Pixels, key: &'static str) -> El 
 /// Where a page's writing goes: over the open page painted in the binding.
 fn page(left: bool) -> El {
     col()
-        .key(if left { "page-index" } else { "page-entry" })
+        .key(if left { "page-entry" } else { "page-source" })
         .pin(
             Some(if left { PAGE_INSET_X } else { SPINE }),
             Some(PAGE_INSET_Y),
@@ -696,24 +856,16 @@ fn page(left: bool) -> El {
 
 // MARK: Index
 
-fn index_page(s: &Cantrip, rows: &[Row], v: Ink, scale: f32) -> El {
+/// The index, beside the book on the desk: every spell with its folio, the open one marked.
+/// The field searches it; moving through it turns the book's pages.
+fn index(s: &Cantrip, rows: &[Row], look: Look) -> El {
+    let p = look.p;
     let selection = s.selection();
-    let heading = col()
-        .w_full()
-        .pt(20.0)
-        .gap(4.0)
-        .child(
-            row()
-                .w_full()
-                .justify_center()
-                .child(text("Index").font(hand(22.0)).color(v.ink)),
-        )
-        .child(flourish(v, 64.0));
     let mut list = col().key("index").w_full().instant_changes();
     for (i, r) in rows.iter().enumerate() {
-        list = list.child(index_line(r, i, i == selection, v, scale));
+        list = list.child(index_line(r, i, i == selection, look));
     }
-    let body: El = if rows.is_empty() {
+    let body = if rows.is_empty() {
         let message = if s.query().is_empty() {
             "No spells are written here yet.".to_string()
         } else {
@@ -723,27 +875,32 @@ fn index_page(s: &Cantrip, rows: &[Row], v: Ink, scale: f32) -> El {
             .key("index-empty")
             .w_full()
             .grow(1.0)
-            .center()
-            .child(text(message).font(italic(14.0)).color(v.ink.alpha(0.6)))
+            .px(10.0)
+            .pt(12.0)
+            .child(
+                text(message)
+                    .font(TextStyle::new(13.0, 400.0).italic().family(p.display))
+                    .color(p.muted)
+                    .wrap(),
+            )
     } else {
-        // The highlight: a wash of rubric that glides from line to line.
+        // The highlight glides from line to line.
         let top = index_span(selection).0;
         let wash = el()
             .key("selection")
             .a11y_hidden()
             .pin(Some(0.0), Some(top), Some(0.0), None)
             .h(INDEX_ROW_H)
-            .radius(3.0)
-            .linear_gradient(
-                FRAC_PI_2,
-                [
-                    (0.0, v.rubric.alpha(0.0)),
-                    (0.12, v.rubric.alpha(0.13)),
-                    (0.88, v.rubric.alpha(0.13)),
-                    (1.0, v.rubric.alpha(0.0)),
-                ],
-            )
-            .motion(crate::views::GLIDE);
+            .radius(7.0)
+            .continuous_corners()
+            .linear_gradient(FRAC_PI_2, p.sweep(1.0))
+            .motion(crate::views::GLIDE)
+            .child(
+                el().pin(Some(0.0), Some(7.0), None, None)
+                    .size(2.0, INDEX_ROW_H - 14.0)
+                    .radius(1.0)
+                    .fill(p.glow),
+            );
         let watch = s.scroll.clone();
         col()
             .key(RESULTS)
@@ -764,24 +921,35 @@ fn index_page(s: &Cantrip, rows: &[Row], v: Ink, scale: f32) -> El {
             .child(col().w_full().py(INDEX_PAD).child(wash).child(list))
     };
     col()
-        .w_full()
-        .h_full()
-        .px(30.0)
-        .pb(12.0)
-        .gap(8.0)
-        .child(heading)
+        .key("index-column")
+        .w(INDEX_W)
+        .h(BOOK_H)
+        .gap(2.0)
+        .child(
+            row()
+                .w_full()
+                .h(24.0)
+                .px(10.0)
+                .center_y()
+                .child(
+                    text(p.label_text("Spells"))
+                        .font(p.label_style())
+                        .color(p.label_color()),
+                )
+                .child(spacer())
+                .child(
+                    text(rows.len().to_string())
+                        .font(p.count_style())
+                        .color(p.faint),
+                ),
+        )
         .child(body)
-        .child(folio("i", v))
 }
 
-fn index_line(r: &Row, index: usize, selected: bool, v: Ink, scale: f32) -> El {
-    let dormant = row_state(r) == RowState::Dormant;
+fn index_line(r: &Row, index: usize, selected: bool, look: Look) -> El {
+    let p = look.p;
     // A disabled spell is written faintly until it's enabled.
-    let ink = match (selected, dormant) {
-        (true, _) => v.rubric,
-        (false, true) => v.ink.alpha(0.45),
-        (false, false) => v.ink,
-    };
+    let dormant = row_state(r) == RowState::Dormant;
     let n = r.accessories.first().cloned().unwrap_or_default();
     row()
         .key(row_key(index))
@@ -794,9 +962,13 @@ fn index_line(r: &Row, index: usize, selected: bool, v: Ink, scale: f32) -> El {
         .checked(selected)
         .w_full()
         .h(INDEX_ROW_H)
-        .px(6.0)
+        .pl(10.0)
+        .pr(8.0)
         .gap(6.0)
         .center_y()
+        .radius(7.0)
+        .continuous_corners()
+        .hover(Color::WHITE.alpha(0.035))
         .on_press_tx(move |s: &mut Cantrip, tx: &mut Tx| {
             if s.selection() == index {
                 if let Some(first) = s.rows().get(index).and_then(|r| r.actions.first().cloned()) {
@@ -806,52 +978,55 @@ fn index_line(r: &Row, index: usize, selected: bool, v: Ink, scale: f32) -> El {
                 s.set_selection(index);
             }
         })
-        // A manicule points at the open entry.
-        .child({
-            let hand = el().w(16.0).center_y();
-            if selected {
-                hand.child(icons::view(
-                    &Icon::Symbol("hand.point.right.fill".into()),
-                    13.0,
-                    v.rubric,
-                    scale,
-                ))
-            } else {
-                hand
-            }
-        })
         .child(
             text(r.title.clone())
-                .font(if selected || dormant {
-                    italic(15.0)
-                } else {
-                    book_face(15.0)
+                .font({
+                    let face = TextStyle::new(13.5, if selected { 600.0 } else { 450.0 })
+                        .family(p.display);
+                    if dormant { face.italic() } else { face }
                 })
-                .color(ink)
+                .color(match (selected, dormant) {
+                    (true, _) => p.text,
+                    (false, true) => p.text.alpha(0.4),
+                    (false, false) => p.text.alpha(0.72),
+                })
                 .truncate()
-                .shrink()
-                .min_w(0.0),
-        )
-        // Leaders to the folio.
-        .child(
-            text(" .".repeat(80))
-                .font(book_face(13.0))
-                .color(v.ink.alpha(0.32))
-                .truncate_fade()
                 .grow(1.0)
-                .min_w(12.0),
+                .min_w(0.0),
         )
         .child(
             text(n)
-                .font(book_face(14.0).features("'onum' 1"))
-                .color(ink.alpha(0.8)),
+                .font(p.count_style())
+                .color(if selected { p.glow } else { p.faint }),
         )
 }
 
-// MARK: Entry
+// MARK: Pages
 
-fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink, look: Look) -> El {
-    let page = col().w_full().h_full().px(34.0).pt(22.0).pb(12.0).gap(10.0);
+/// A page's number at its foot: a spread's left page is even, its right odd.
+fn folio_of(r: Option<&Row>, right: bool) -> String {
+    let n: usize = r
+        .and_then(|r| r.accessories.first())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1);
+    (2 * n + usize::from(right)).to_string()
+}
+
+fn entry_page(
+    key: &str,
+    r: Option<&Row>,
+    command: Option<&WireCommand>,
+    v: Ink,
+    look: Look,
+) -> El {
+    let page = col()
+        .w_full()
+        .h_full()
+        .pl(30.0)
+        .pr(22.0)
+        .pt(22.0)
+        .pb(12.0)
+        .gap(10.0);
     let Some(r) = r else {
         return page
             .child(spacer())
@@ -862,21 +1037,20 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
                         .color(v.ink.alpha(0.5)),
                 ),
             )
-            .child(spacer())
-            .child(folio("ii", v));
+            .child(spacer());
     };
     let mut chars = r.title.chars();
     let initial: String = chars.next().map(String::from).unwrap_or_default();
     let rest: String = chars.collect();
     // An illuminated initial: a gilt frame round a rubric field, the letter in leaf.
     let illumination = el()
-        .size(62.0, 62.0)
+        .size(50.0, 50.0)
         .center()
         .radius(3.0)
         .fill(v.rubric)
         .radial_gradient(
             [0.3, 0.25],
-            70.0,
+            60.0,
             [
                 (0.0, Color::WHITE.alpha(0.18)),
                 (1.0, Color::BLACK.alpha(0.25)),
@@ -892,11 +1066,11 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
             inset: false,
         })
         .child(
-            el().pin(Some(4.0), Some(4.0), Some(4.0), Some(4.0))
+            el().pin(Some(3.5), Some(3.5), Some(3.5), Some(3.5))
                 .radius(1.5)
                 .border(1.0, v.gilt.alpha(0.55)),
         )
-        .child(text(initial).font(hand(44.0)).color(v.letter));
+        .child(text(initial).font(hand(36.0)).color(v.letter));
     let state = row_state(r);
     let mode = match (state, command.map(|c| c.mode)) {
         (RowState::Dormant, _) => "disabled",
@@ -907,27 +1081,28 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
     let title = col()
         .grow(1.0)
         .min_w(0.0)
-        .gap(4.0)
+        .gap(3.0)
         .child(
             text(rest)
-                .font(hand(27.0).lh(34.0))
+                .font(hand(22.0).lh(26.0))
                 .color(v.ink)
-                .truncate()
+                .wrap()
+                .max_lines(2)
                 .min_w(0.0),
         )
         .child(
             row()
-                .gap(6.0)
+                .gap(5.0)
                 .center_y()
-                .child(icons::view(&r.icon, 13.0, v.rubric.alpha(0.85), look.scale))
-                .child(text(mode).font(italic(13.0)).color(v.ink.alpha(0.6))),
+                .child(icons::view(&r.icon, 12.0, v.rubric.alpha(0.85), look.scale))
+                .child(text(mode).font(italic(12.0)).color(v.ink.alpha(0.6))),
         );
     let mut entry = col()
         .key(format!("{key}-{}", r.id))
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .gap(12.0)
+        .gap(11.0)
         // Under Reduce Motion no leaf turns, and entries cross-fade; otherwise the leaf has
         // already laid the new one down when it lands, and it swaps in at once.
         .transition(if look.still {
@@ -940,12 +1115,12 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
         .child(
             row()
                 .w_full()
-                .gap(12.0)
+                .gap(10.0)
                 .items_start()
                 .child(illumination)
-                .child(title.pt(14.0)),
+                .child(title.pt(8.0)),
         )
-        .child(flourish(v, 90.0))
+        .child(flourish(v, 70.0))
         .child(
             text(
                 r.subtitle
@@ -953,16 +1128,16 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "Its purpose is not written down.".into()),
             )
-            .font(book_face(15.5).lh(22.0))
+            .font(book_face(15.0).lh(21.0))
             .color(v.ink.alpha(0.9))
             .wrap()
-            .max_lines(4)
+            .max_lines(6)
             .selectable(true),
         );
     if let Some(c) = command.filter(|c| !c.keywords.is_empty()) {
         entry = entry.child(
             text(format!("Also called {}.", c.keywords.join(", ")))
-                .font(italic(13.5).lh(19.0))
+                .font(italic(13.0).lh(18.0))
                 .color(v.ink.alpha(0.6))
                 .wrap()
                 .max_lines(2),
@@ -986,41 +1161,151 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
                 ),
         );
     }
-    if let Some(c) = command {
-        entry = entry.child(spacer()).child(
-            row()
-                .gap(6.0)
-                .center_y()
-                .child(
-                    text("Incantation")
-                        .font(italic(12.5))
-                        .color(v.rubric.alpha(0.8)),
-                )
-                .child(
-                    text(c.id.clone())
-                        .font(
-                            TextStyle::new(11.5, 400.0)
-                                .family(Family::SystemMono)
-                                .tracking(0.2),
-                        )
-                        .color(v.ink.alpha(0.55))
-                        .truncate()
-                        .selectable(true),
-                ),
+    page.child(entry).child(folio(&folio_of(Some(r), false), v))
+}
+
+/// The incantation: the spell's code as its file has it, copied out in a scribe's hand.
+fn source_page(key: &str, r: Option<&Row>, id: Option<&str>, source: Option<&str>, v: Ink) -> El {
+    let page = col()
+        .w_full()
+        .h_full()
+        .pl(20.0)
+        .pr(28.0)
+        .pt(20.0)
+        .pb(12.0)
+        .gap(8.0);
+    let Some(r) = r else {
+        return page;
+    };
+    let mono = |size: f32| TextStyle::new(size, 400.0).family(Family::SystemMono);
+    let head = row()
+        .w_full()
+        .gap(6.0)
+        .center_y()
+        .child(
+            text("Incantation")
+                .font(hand(17.0))
+                .color(v.rubric.alpha(0.9)),
+        )
+        .child(spacer())
+        .child(
+            text(id.unwrap_or_default().to_string())
+                .font(mono(9.5).tracking(0.2))
+                .color(v.ink.alpha(0.5))
+                .truncate()
+                .shrink()
+                .min_w(0.0)
+                .selectable(true),
         );
-    }
-    let n = r.accessories.first().cloned().unwrap_or_default();
-    page.child(entry).child(folio(&n, v))
+    let body = match source {
+        Some(source) => {
+            let mut lines = col().w_full().selectable(true);
+            for line in source.lines() {
+                let trimmed = line.trim_start();
+                let comment = trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with('*');
+                lines = lines.child(
+                    text(if line.is_empty() { " ".into() } else { line.to_string() })
+                        .font(mono(9.0).lh(12.4))
+                        .color(if comment {
+                            v.rubric.alpha(0.62)
+                        } else {
+                            v.ink.alpha(0.86)
+                        })
+                        .truncate_fade(),
+                );
+            }
+            lines
+        }
+        None => col().w_full().pt(8.0).child(
+            text("The incantation is not at hand.")
+                .font(italic(13.5))
+                .color(v.ink.alpha(0.55)),
+        ),
+    };
+    let writing = col()
+        .key(format!("{key}-{}", r.id))
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .gap(8.0)
+        .transition(Transition::none())
+        .instant_changes()
+        .child(head)
+        .child(
+            col()
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .clip_fade(0.0, 0.0, 0.0, 22.0)
+                .child(body),
+        );
+    page.child(writing).child(folio(&folio_of(Some(r), true), v))
 }
 
 // MARK: Leaves
 
+/// The cover's title, tooled in gold below its sigil.
+fn cover_title() -> El {
+    col()
+        .pin(Some(0.0), Some(BOOK_H * 0.71), None, None)
+        .size(SPINE, 44.0)
+        .center()
+        // Pressed in: the dark of the impression above, the gold in it.
+        .child(
+            el().child(
+                text("Grimoire")
+                    .font(hand(30.0).tracking(1.5))
+                    .color(Color::BLACK.alpha(0.7)),
+            )
+            .child(
+                el().pin(Some(0.0), Some(1.0), None, None).child(
+                    text("Grimoire")
+                        .font(hand(30.0).tracking(1.5))
+                        .color(TOOLED.mix(Color::WHITE, 0.3)),
+                ),
+            ),
+        )
+}
+
+/// A face of a sheet in the air lying flat at `rect`: its `picture`, with what's written on
+/// it laid where its page writes it (a page's picture reaches past the page by the tattered
+/// margin; the cover's is the board).
+fn flat_face(rect: [f32; 4], picture: &rune::Pixels, writing: Option<El>) -> El {
+    let [x, y, w, h] = rect;
+    let face = el()
+        .a11y_hidden()
+        .inert()
+        .pin(Some(x), Some(y), None, None)
+        .size(w, h)
+        .pixels(picture);
+    let Some(writing) = writing else {
+        return face;
+    };
+    if (w - SPINE).abs() < 0.5 {
+        return face.child(writing);
+    }
+    let left = x < SPINE;
+    face.child(
+        el().pin(
+            Some(if left { paper::PAGE_MARGIN } else { 0.0 }),
+            Some(paper::PAGE_MARGIN),
+            None,
+            None,
+        )
+        .size(PAGE_W, PAGE_H)
+        .child(writing),
+    )
+}
+
 /// The sheets in the air the compositor doesn't draw. Rebuilt every frame while they turn;
 /// their changes land at once (the frame clock moves them, not springs). The cover, once past
 /// the spine, goes `under` the pages, which settle onto it; its inside is the left side of the
-/// book itself, so it lands as it. The newest leaf either side is the compositor's (`sheets`),
-/// writing and shadow too; any others riffling past are blank.
-fn leaves(leaves: &Leaves, under: bool, tex: &paper::Textures) -> El {
+/// book itself (`landing` is the page it lands as), so it lands as it. The newest leaf either
+/// side is the compositor's (`sheets`), writing and shadow too; any others riffling past are
+/// blank.
+fn leaves(leaves: &Leaves, under: bool, tex: &paper::Textures, landing: &rune::Pixels) -> El {
     let mut layer = el()
         .key(if under { "leaves-under" } else { "leaves" })
         .a11y_hidden()
@@ -1036,67 +1321,14 @@ fn leaves(leaves: &Leaves, under: bool, tex: &paper::Textures) -> El {
         if under != (kind == Kind::Cover && u >= 0.5) || drawn.contains(&Some(i)) {
             continue;
         }
-        layer = layer.child(leaf(i, kind, u, tex));
+        layer = layer.child(leaf(i, kind, u, tex, landing));
     }
     layer
 }
 
-/// The face-up sheet lying flat on the right, with what's written on it: the entry a leaf
-/// turns away (forward) or toward (back), or the cover's tooled title.
-fn flat_recto(
-    s: &Cantrip,
-    kind: Kind,
-    face: Option<&Row>,
-    picture: &rune::Pixels,
-    v: Ink,
-    look: Look,
-) -> El {
-    let [x, y, w, h] = kind.flat();
-    let sheet = el()
-        .key("recto")
-        .a11y_hidden()
-        .inert()
-        .pin(Some(x), Some(y), None, None)
-        .size(w, h)
-        .pixels(picture);
-    match kind {
-        Kind::Cover => sheet.child(
-            col()
-                .pin(Some(0.0), Some(BOOK_H * 0.71), None, None)
-                .size(w, 44.0)
-                .center()
-                // Pressed in: the dark of the impression above, the gold in it.
-                .child(
-                    el().child(
-                        text("Grimoire")
-                            .font(hand(32.0).tracking(1.5))
-                            .color(Color::BLACK.alpha(0.7)),
-                    )
-                    .child(
-                        el().pin(Some(0.0), Some(1.0), None, None).child(
-                            text("Grimoire")
-                                .font(hand(32.0).tracking(1.5))
-                                .color(TOOLED.mix(Color::WHITE, 0.3)),
-                        ),
-                    ),
-                ),
-        ),
-        Kind::Leaf { .. } => match face {
-            // Written where the entry page writes it: its picture reaches past the page by the
-            // tattered margin above.
-            Some(r) => sheet.child(
-                el().pin(Some(0.0), Some(paper::PAGE_MARGIN), None, None)
-                    .size(PAGE_W, PAGE_H)
-                    .child(entry_page("leaf-entry", Some(r), command_of(s, r), v, look)),
-            ),
-            None => sheet,
-        },
-    }
-}
-
 /// A sheet `u` of the way over (`pose`) the compositor doesn't draw: the cover's inside (the
-/// left side of the book, binding and page), or a blank leaf riffling past.
-fn leaf(i: usize, kind: Kind, u: f32, tex: &paper::Textures) -> El {
+/// left side of the book, binding and the `landing` page), or a blank leaf riffling past.
+fn leaf(i: usize, kind: Kind, u: f32, tex: &paper::Textures, landing: &rune::Pixels) -> El {
     let pose = pose(kind, u);
     let [x, y, w, h] = pose.rect;
     let (on_right, stand) = (pose.on_right, pose.stand);
@@ -1139,7 +1371,7 @@ fn leaf(i: usize, kind: Kind, u: f32, tex: &paper::Textures) -> El {
             .child(
                 el().pin(Some(px * kx), Some(py * ky), None, None)
                     .size(pw * kx, ph * ky)
-                    .pixels(&tex.page_left),
+                    .pixels(landing),
             )
         }
         (Kind::Cover, true) => lifted(
@@ -1150,12 +1382,12 @@ fn leaf(i: usize, kind: Kind, u: f32, tex: &paper::Textures) -> El {
         (Kind::Leaf { .. }, true) => lifted(
             el().pin(Some(x), Some(y), None, None)
                 .size(w, h)
-                .pixels(&tex.pages[0]),
+                .pixels(&tex.pages_right[0]),
         ),
         (Kind::Leaf { .. }, false) => lifted(
             el().pin(Some(x), Some(y), None, None)
                 .size(w, h)
-                .pixels(&tex.page_left),
+                .pixels(&tex.pages_left[0]),
         ),
     };
     el().key(format!("leaf-{i}"))

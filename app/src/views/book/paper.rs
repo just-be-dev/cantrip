@@ -5,9 +5,9 @@
 //! round a sigil.
 //!
 //! Pages are pictures of their own, laid over the binding, so a leaf that turns is exactly the
-//! page it lifts off and exactly the page it lands on. The left page is one; the right pages
-//! come in `VARIANTS`, each worn its own way (`Wear`), so leafing through shows different
-//! stains, spots, burns, blots and wax.
+//! page it lifts off and exactly the page it lands on. Pages come in `VARIANTS` either side,
+//! each worn its own way (`Wear`), so leafing through shows different stains, spots, burns,
+//! blots and wax.
 //!
 //! The book is the same in every theme; only its inks change (`book.rs`, `Ink`). Everything
 //! here is in points of the spread (`BOOK_W` × `BOOK_H`), sampled at each pixel's centre, and
@@ -47,8 +47,8 @@ const HEADBAND: [Rgb; 2] = [[0.55, 0.12, 0.08], [0.82, 0.66, 0.34]];
 /// How far a page's picture reaches past its rectangle at its outer edges (`page_rect`), for
 /// its tattered edge.
 pub const PAGE_MARGIN: f32 = 3.0;
-/// How many right pages there are, each worn its own way.
-pub const VARIANTS: usize = 6;
+/// How many pages there are either side, each worn its own way.
+pub const VARIANTS: usize = 7;
 
 /// Where a page's picture lies in the spread: x, y, width and height.
 pub fn page_rect(left: bool) -> [f32; 4] {
@@ -69,9 +69,9 @@ pub struct Textures {
     /// The binding, either side of the spine: leather, brass, and the pages beneath.
     pub left: Pixels,
     pub right: Pixels,
-    /// The left page, and the right pages, worn each its own way (`page_rect`).
-    pub page_left: Pixels,
-    pub pages: Vec<Pixels>,
+    /// The pages either side, worn each its own way (`page_rect`).
+    pub pages_left: Vec<Pixels>,
+    pub pages_right: Vec<Pixels>,
     /// The front cover.
     pub cover: Pixels,
 }
@@ -116,8 +116,8 @@ impl Textures {
         Textures {
             left: half(0.0),
             right: half(SPINE),
-            page_left: sheet(true, &WEAR[0]),
-            pages: WEAR[1..].iter().map(|w| sheet(false, w)).collect(),
+            pages_left: WEAR.iter().map(|w| sheet(true, w)).collect(),
+            pages_right: WEAR.iter().map(|w| sheet(false, w)).collect(),
             cover: paint(SPINE, BOOK_H, scale, cover).pixels(),
         }
     }
@@ -335,15 +335,78 @@ pub struct Wear {
     wax: Option<[f32; 3]>,
 }
 
-/// The left page, then the right pages.
-const WEAR: [Wear; VARIANTS + 1] = [
-    Wear { at: [0.0, 0.0], tide: 1.0, fox: 0.8, burn: 1.0, age: 0.15, ghost: 0.4, blot: None, wax: None },
-    Wear { at: [611.0, 287.0], tide: 0.6, fox: 1.2, burn: 0.9, age: 0.45, ghost: 0.9, blot: Some([0.84, 0.9, 8.0]), wax: None },
-    Wear { at: [1931.0, 1213.0], tide: 1.7, fox: 0.5, burn: 1.0, age: -0.25, ghost: 0.3, blot: None, wax: Some([0.8, 0.12, 12.0]) },
-    Wear { at: [2477.0, 389.0], tide: 0.8, fox: 1.7, burn: 1.4, age: 0.7, ghost: 0.6, blot: None, wax: None },
-    Wear { at: [3313.0, 2861.0], tide: 1.2, fox: 0.7, burn: 0.8, age: 0.1, ghost: 1.0, blot: Some([0.7, 0.85, 5.0]), wax: Some([0.86, 0.78, 9.0]) },
-    Wear { at: [4129.0, 1777.0], tide: 0.4, fox: 1.0, burn: 0.7, age: -0.35, ghost: 0.5, blot: None, wax: None },
-    Wear { at: [5281.0, 3407.0], tide: 1.1, fox: 0.9, burn: 1.25, age: 0.55, ghost: 0.7, blot: None, wax: Some([0.6, 0.88, 13.0]) },
+/// Each page's wear, either side (a side mirrors where its blots and wax lie).
+const WEAR: [Wear; VARIANTS] = [
+    Wear {
+        at: [0.0, 0.0],
+        tide: 1.0,
+        fox: 0.8,
+        burn: 1.0,
+        age: 0.15,
+        ghost: 0.4,
+        blot: None,
+        wax: None,
+    },
+    Wear {
+        at: [611.0, 287.0],
+        tide: 0.6,
+        fox: 1.2,
+        burn: 0.9,
+        age: 0.45,
+        ghost: 0.9,
+        blot: Some([0.84, 0.9, 8.0]),
+        wax: None,
+    },
+    Wear {
+        at: [1931.0, 1213.0],
+        tide: 1.7,
+        fox: 0.5,
+        burn: 1.0,
+        age: -0.25,
+        ghost: 0.3,
+        blot: None,
+        wax: Some([0.8, 0.12, 12.0]),
+    },
+    Wear {
+        at: [2477.0, 389.0],
+        tide: 0.8,
+        fox: 1.7,
+        burn: 1.4,
+        age: 0.7,
+        ghost: 0.6,
+        blot: None,
+        wax: None,
+    },
+    Wear {
+        at: [3313.0, 2861.0],
+        tide: 1.2,
+        fox: 0.7,
+        burn: 0.8,
+        age: 0.1,
+        ghost: 1.0,
+        blot: Some([0.7, 0.85, 5.0]),
+        wax: Some([0.86, 0.78, 9.0]),
+    },
+    Wear {
+        at: [4129.0, 1777.0],
+        tide: 0.4,
+        fox: 1.0,
+        burn: 0.7,
+        age: -0.35,
+        ghost: 0.5,
+        blot: None,
+        wax: None,
+    },
+    Wear {
+        at: [5281.0, 3407.0],
+        tide: 1.1,
+        fox: 0.9,
+        burn: 1.25,
+        age: 0.55,
+        ghost: 0.7,
+        blot: None,
+        wax: Some([0.6, 0.88, 13.0]),
+    },
 ];
 
 /// Parchment at (`x`, `y`): mottled, fibrous, foxed and tide-marked, browning and burnt
@@ -367,7 +430,11 @@ fn parchment(x: f32, y: f32, edge: f32, wear: &Wear) -> Rgb {
     // Tide marks where water once dried.
     let tide = fbm(x * 0.005 + 3.0, y * 0.005, 4, 29);
     let ring = (-((tide - 0.6) / 0.012).powi(2)).exp();
-    c = mix(c, STAIN, (0.13 * ring + 0.05 * smooth(0.6, 0.7, tide)) * wear.tide);
+    c = mix(
+        c,
+        STAIN,
+        (0.13 * ring + 0.05 * smooth(0.6, 0.7, tide)) * wear.tide,
+    );
     // Foxing: rust-brown spots, in drifts.
     let drift = smooth(0.4, 0.7, fbm(x * 0.012, y * 0.012, 2, 30));
     let (wx, wy) = (
@@ -379,7 +446,11 @@ fn parchment(x: f32, y: f32, edge: f32, wear: &Wear) -> Rgb {
     c = mix(c, FOX, (0.5 * fox + 0.45 * speck).min(1.0));
     // Browned toward the edges, scorched at the very edge.
     let ragged = edge + (fbm(x * 0.06, y * 0.06, 3, 33) - 0.5) * 18.0;
-    c = mix(c, BURN, (0.72 * smooth(19.0 * wear.burn, 0.0, ragged)).min(0.9));
+    c = mix(
+        c,
+        BURN,
+        (0.72 * smooth(19.0 * wear.burn, 0.0, ragged)).min(0.9),
+    );
     mix(c, SCORCH, 0.85 * smooth(2.5, 0.0, edge))
 }
 
@@ -395,7 +466,11 @@ fn ghost(x: f32, y: f32, u: f32, v: f32, wear: &Wear) -> f32 {
     let stroke = smooth(3.4, 1.6, (across - LINE * 0.5).abs());
     // Words: runs of strokes with gaps, a line ending short now and then.
     let (x, seed) = (x + wear.at[0], row as i32);
-    let word = smooth(0.42, 0.5, noise(x * 0.09, row * 7.3, 71 + seed.rem_euclid(5) as u32));
+    let word = smooth(
+        0.42,
+        0.5,
+        noise(x * 0.09, row * 7.3, 71 + seed.rem_euclid(5) as u32),
+    );
     let letters = 0.6 + 0.4 * noise(x * 0.9, row * 3.1, 72);
     let ends = smooth(0.95, 0.85, u + 0.25 * hash(seed, 0, 73));
     wear.ghost * 0.12 * stroke * word * letters * ends
@@ -417,7 +492,9 @@ fn blot(x: f32, y: f32, at: [f32; 2], r: f32) -> f32 {
 fn wax(x: f32, y: f32, at: [f32; 2], r: f32) -> (f32, f32, f32) {
     let (dx, dy) = (x - at[0], y - at[1]);
     // A run trickling down from the pool.
-    let run = smooth(r * 0.32, r * 0.18, (dx + 0.15 * dy).abs()) * smooth(r * 2.2, r * 1.6, dy) * smooth(-0.2, 0.2, dy);
+    let run = smooth(r * 0.32, r * 0.18, (dx + 0.15 * dy).abs())
+        * smooth(r * 2.2, r * 1.6, dy)
+        * smooth(-0.2, 0.2, dy);
     let d = dx.hypot(dy);
     let a = dy.atan2(dx);
     let edge = r * (0.8 + 0.35 * noise(a.cos() * 1.5 + 4.0, a.sin() * 1.5, 91));
@@ -445,11 +522,17 @@ fn page(x: f32, y: f32, wear: &Wear) -> [f32; 4] {
     let mut c = parchment(x, y, edge.max(0.0), wear);
     c = mix(c, STAIN, ghost(if left { -x } else { x }, y, u, v, wear));
     if let Some([bu, bv, r]) = wear.blot {
-        let at = [SPINE + (if left { -1.0 } else { 1.0 }) * bu * PAGE_W, PAGE_INSET_Y + bv * PAGE_H];
+        let at = [
+            SPINE + (if left { -1.0 } else { 1.0 }) * bu * PAGE_W,
+            PAGE_INSET_Y + bv * PAGE_H,
+        ];
         c = mix(c, [0.17, 0.10, 0.06], 0.82 * blot(x, y, at, r));
     }
     if let Some([wu, wv, r]) = wear.wax {
-        let at = [SPINE + (if left { -1.0 } else { 1.0 }) * wu * PAGE_W, PAGE_INSET_Y + wv * PAGE_H];
+        let at = [
+            SPINE + (if left { -1.0 } else { 1.0 }) * wu * PAGE_W,
+            PAGE_INSET_Y + wv * PAGE_H,
+        ];
         let (grease, cover, light) = wax(x, y, at, r);
         c = mix(c, scale(c, 0.78), grease);
         c = mix(c, [0.95, 0.9, 0.74], cover);
@@ -637,24 +720,35 @@ mod tests {
 
     #[test]
     fn pages_lie_over_the_binding_each_worn_its_own_way() {
-        assert_eq!(spread(SPINE + 40.0, BOOK_H / 2.0)[3], 1.0, "paper beneath the pages");
+        assert_eq!(
+            spread(SPINE + 40.0, BOOK_H / 2.0)[3],
+            1.0,
+            "paper beneath the pages"
+        );
         assert_eq!(spread(0.0, 0.0)[3], 0.0, "rounded corners");
         let mid = [SPINE + 120.0, BOOK_H / 2.0];
         let on = page(mid[0], mid[1], &WEAR[1]);
         assert_eq!(on[3], 1.0);
-        assert_eq!(page(BOOK_W - 2.0, mid[1], &WEAR[1])[3], 0.0, "clear past its edge");
+        assert_eq!(
+            page(BOOK_W - 2.0, mid[1], &WEAR[1])[3],
+            0.0,
+            "clear past its edge"
+        );
         let board = spread(BOOK_W - 2.5, BOOK_H / 2.0);
         assert!(on[0] > board[0], "parchment is lighter than leather");
         let differ = (2..WEAR.len())
             .filter(|&w| {
                 (0..40).any(|i| {
-                    let (x, y) = (SPINE + 20.0 + i as f32 * 8.0, PAGE_INSET_Y + 20.0 + i as f32 * 7.0);
+                    let (x, y) = (
+                        SPINE + 20.0 + i as f32 * 8.0,
+                        PAGE_INSET_Y + 20.0 + i as f32 * 7.0,
+                    );
                     let (a, b) = (page(x, y, &WEAR[1]), page(x, y, &WEAR[w]));
                     (a[0] - b[0]).abs() > 0.03
                 })
             })
             .count();
-        assert_eq!(differ, VARIANTS - 1, "no two right pages alike");
+        assert_eq!(differ, VARIANTS - 2, "no two pages alike");
     }
 
     #[test]

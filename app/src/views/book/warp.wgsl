@@ -16,8 +16,8 @@ struct U {
     // The open pages' top and bottom; the light's sideways reach; how far the slot reaches
     // past the book on every side, for pages bulging over its edges.
     page: vec4<f32>,
-    // The sheets turning (`Sheet` in `book.rs`): the one face up on the right, drawn from its
-    // capture, and the leaf back up on the left, drawn from the left page itself. Each: where
+    // The sheets turning (`Sheet` in `book.rs`): the one face up on the right and the leaf
+    // back up on the left, each drawn from its capture. Each: where
     // it lies flat, where it shows now, and (whether there is one, how upright it stands, how
     // far its shadow falls, whether it's the cover).
     recto_flat: vec4<f32>,
@@ -32,6 +32,7 @@ struct U {
 @group(0) @binding(1) var backdrop: texture_2d<f32>;
 @group(0) @binding(2) var smp: sampler;
 @group(0) @binding(3) var leaf: texture_2d<f32>;
+@group(0) @binding(4) var leaf_left: texture_2d<f32>;
 
 // How high a page stands (points) and how fast it rises out of the gutter.
 const RISE: f32 = 17.0;
@@ -179,7 +180,7 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     if (u.verso_k.x > 0.5 && inside(src, v)) {
         let a = (src - v.xy) / v.zw;
         let flat = u.verso_flat.xy + a * u.verso_flat.zw;
-        let c = textureSampleLevel(backdrop, smp, at_uv(flat), 0.0);
+        let c = textureSampleLevel(leaf_left, smp, at_uv(flat), 0.0);
         return vec4<f32>(c.rgb * shade * lit(1.0 - a.x, u.verso_k.y), c.a);
     }
     // Their shadows, on the pages beside their free edges.
