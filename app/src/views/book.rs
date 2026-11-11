@@ -151,6 +151,16 @@ impl Leaves {
         })
     }
 
+    /// The sheet in the air whose face is up on the right, writing and all: the newest one
+    /// there. Which turn it is (its place in `progress`), what it is, and how far it's gone.
+    fn recto(&self) -> Option<(usize, Kind, f32)> {
+        self.progress()
+            .enumerate()
+            .filter(|(_, (kind, u))| pose(*kind, *u).on_right)
+            .last()
+            .map(|(i, (kind, u))| (i, kind, u))
+    }
+
     /// How far the cover has swung, while it's opening.
     fn cover(&self) -> Option<f32> {
         self.progress()
@@ -160,12 +170,64 @@ impl Leaves {
 }
 
 impl Kind {
+    /// Where the sheet lies before it turns, face up on the right: x, y, width and height.
+    fn flat(self) -> [f32; 4] {
+        match self {
+            Kind::Cover => [SPINE, 0.0, SPINE, BOOK_H],
+            Kind::Leaf { .. } => [SPINE, PAGE_INSET_Y, PAGE_W, PAGE_H],
+        }
+    }
+
     fn duration(self) -> f64 {
         match self {
             Kind::Cover => COVER,
             Kind::Leaf { .. } => TURN,
         }
     }
+}
+
+/// A sheet `u` of the way over. It turns about the spine: its width is the cosine of its angle,
+/// and it lifts a little as it stands up.
+#[derive(Clone, Copy, Debug)]
+struct Pose {
+    /// Where it shows: x, y, width and height.
+    rect: [f32; 4],
+    /// How upright it stands: 0 flat, 1 on end.
+    stand: f32,
+    /// Which side of the spine it's over, and so which face is up.
+    on_right: bool,
+    /// The angle it's turned through.
+    theta: f32,
+}
+
+fn pose(kind: Kind, u: f32) -> Pose {
+    let forward = match kind {
+        Kind::Cover => true,
+        Kind::Leaf { forward, .. } => forward,
+    };
+    let theta = u * PI;
+    let reach = theta.cos();
+    // Forward starts on the right.
+    let on_right = (reach > 0.0) == forward;
+    let [_, top, w_max, h] = kind.flat();
+    let w = (reach.abs() * w_max).max(0.5);
+    let lift = theta.sin() * 5.0;
+    let x = if on_right { SPINE } else { SPINE - w };
+    Pose {
+        rect: [x, top - lift, w, h + 2.0 * lift],
+        stand: 1.0 - reach.abs(),
+        on_right,
+        theta,
+    }
+}
+
+/// The face-up sheet in the air, for the compositor to draw foreshortened from its capture:
+/// where it lies flat, where it shows, and how upright it stands.
+pub(super) fn recto(s: &Cantrip) -> Option<([f32; 4], [f32; 4], f32)> {
+    let book = s.book.as_ref().filter(|_| s.session.is_none() && s.picker.is_none())?;
+    let (_, kind, u) = book.leaves.recto()?;
+    let pose = pose(kind, u);
+    Some((kind.flat(), pose.rect, pose.stand))
 }
 
 fn ease(u: f32) -> f32 {
@@ -332,12 +394,8 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
         .map_or(1.0, |u| ((u - 0.55) * 2.6).clamp(0.0, 1.0));
 
     // The open book, either side of the spine, and its shadow on the desk.
-    let half = |left: bool| {
-        el().key(if left {
-            "binding-left"
-        } else {
-            "binding-right"
-        })
+    let half = |left: bool, key: &'static str| {
+        el().key(key)
         .a11y_hidden()
         .pin(Some(if left { 0.0 } else { SPINE }), Some(0.0), None, None)
         .size(SPINE, BOOK_H)
@@ -364,21 +422,44 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
             inset: false,
         })
     };
-    let spread = el()
+    let recto = book.leaves.recto();
+    let mut spread = el()
         .key("book")
         .role("group")
         .label("Grimoire")
         .size(BOOK_W, BOOK_H)
-        .child(half(false))
-        .child(half(true).opacity(left_shown))
-        .child(leaves(s, &rows, &book.leaves, true, v, &tex, look))
+        .child(half(false, "binding-right"))
+        .child(half(true, "binding-left").opacity(left_shown))
+        .child(leaves(&book.leaves, recto, true, &tex))
         .child(
             page(true)
                 .opacity(left_shown)
                 .child(index_page(s, &rows, v, look.scale)),
-        )
+        );
+    if let Some((_, kind, _)) = recto {
+        // The sheet turning, lying flat with its writing, for the compositor to capture and
+        // draw foreshortened as it turns (`warp`); then the right half again, over it.
+        // It comes and goes at once: a fade would leave a ghost of it lying flat.
+        spread = spread.child(
+            el().key("turning")
+                .a11y_hidden()
+                .inert()
+                .pin(Some(0.0), Some(0.0), None, None)
+                .size(BOOK_W, BOOK_H)
+                .transition(Transition::none())
+                .instant_changes()
+                .child(flat_recto(s, &rows, kind, v, &tex, look))
+                .child(warp::capture())
+                .child(
+                    el().pin(Some(SPINE), Some(0.0), None, None)
+                        .size(SPINE, BOOK_H)
+                        .pixels(&tex.right),
+                ),
+        );
+    }
+    let spread = spread
         .child(page(false).child(entry_page("entry", selected.as_ref(), command, v, look)))
-        .child(leaves(s, &rows, &book.leaves, false, v, &tex, look))
+        .child(leaves(&book.leaves, recto, false, &tex))
         // Last: everything above, redrawn as it lies on curved pages. The pages settle into
         // their curve as the cover lands.
         .child(warp::slot(
@@ -702,15 +783,13 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
 
 /// The leaves in the air, over the spread. Rebuilt every frame while they turn; their changes
 /// land at once (the frame clock moves them, not springs). The cover, once past the spine,
-/// goes `under` the pages, which settle onto it.
+/// goes `under` the pages, which settle onto it. The `recto`, face up on the right, is drawn
+/// by the compositor from its capture (`flat_recto`); only its shadow is drawn here.
 fn leaves(
-    s: &Cantrip,
-    rows: &[Row],
     leaves: &Leaves,
+    recto: Option<(usize, Kind, f32)>,
     under: bool,
-    v: Ink,
     tex: &paper::Textures,
-    look: Look,
 ) -> El {
     let mut layer = el()
         .key(if under { "leaves-under" } else { "leaves" })
@@ -723,83 +802,35 @@ fn leaves(
         if under != (kind == Kind::Cover && u >= 0.5) {
             continue;
         }
-        // Its face on the right is the entry it turns away (forward) or toward (back); the
-        // other side, over the index, is the back of the page, blank.
-        let face = match kind {
-            Kind::Cover => None,
-            Kind::Leaf { forward, from } => {
-                let line = if forward { from } else { s.selection() };
-                rows.get(line).map(|r| {
-                    let key = format!("leaf-entry-{i}");
-                    entry_page(&key, Some(r), command_of(s, r), v, look)
-                })
-            }
-        };
-        layer = layer.child(leaf(i, kind, u, face, tex));
+        let sheet = recto.is_none_or(|(r, _, _)| r != i);
+        layer = layer.child(leaf(i, kind, u, sheet, tex));
     }
     layer
 }
 
-/// One leaf, `u` of the way over. It turns about the spine: its width is the cosine of its
-/// angle, it lifts a little as it stands up, and it casts a shadow on the page it's leaving.
-fn leaf(i: usize, kind: Kind, u: f32, face: Option<El>, tex: &paper::Textures) -> El {
-    let forward = match kind {
-        Kind::Cover => true,
-        Kind::Leaf { forward, .. } => forward,
-    };
-    let theta = u * PI;
-    let reach = theta.cos();
-    // Which side of the spine it's over: forward starts on the right.
-    let on_right = (reach > 0.0) == forward;
-    let (w_max, h, top) = match kind {
-        Kind::Cover => (SPINE, BOOK_H, 0.0),
-        Kind::Leaf { .. } => (PAGE_W, PAGE_H, PAGE_INSET_Y),
-    };
-    let w = (reach.abs() * w_max).max(0.5);
-    let lift = theta.sin() * 5.0;
-    let x = if on_right { SPINE } else { SPINE - w };
-    // The side that faces up: brighter lying flat, shaded as it stands.
-    let stand = 1.0 - reach.abs();
-    let picture = match (kind, on_right) {
-        (Kind::Cover, true) => &tex.cover,
-        (Kind::Cover, false) => &tex.inside,
-        (Kind::Leaf { .. }, true) => &tex.leaf_right,
-        (Kind::Leaf { .. }, false) => &tex.leaf_left,
-    };
-    // Shaded as it stands, darkest at the spine.
-    let shade = Color::BLACK.alpha(0.1 + 0.45 * stand);
-    let (from, to) = if on_right {
-        (shade, Color::BLACK.alpha(0.12 * stand))
-    } else {
-        (Color::BLACK.alpha(0.12 * stand), shade)
-    };
-    let mut sheet = el()
-        .pin(Some(x), Some(top - lift), None, None)
-        .size(w, h + 2.0 * lift)
-        .pixels(picture)
-        .box_shadow(Shadow {
-            x: if on_right { 6.0 } else { -6.0 } * stand,
-            y: 4.0 + 4.0 * stand,
-            blur: 14.0 * stand + 2.0,
-            spread: 0.0,
-            color: Color::BLACK.alpha(0.4 * stand),
-            inset: false,
-        });
-    let light = el()
-        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .linear_gradient(FRAC_PI_2, [(0.0, from), (1.0, to)]);
-    sheet = match kind {
-        // Its title, tooled in gold below the sigil, while it still faces up.
-        Kind::Cover => sheet.child(
+/// The face-up sheet lying flat on the right, with what's written on it: the entry a leaf
+/// turns away (forward) or toward (back), or the cover's tooled title.
+fn flat_recto(
+    s: &Cantrip,
+    rows: &[Row],
+    kind: Kind,
+    v: Ink,
+    tex: &paper::Textures,
+    look: Look,
+) -> El {
+    let [x, y, w, h] = kind.flat();
+    let sheet = el()
+        .key("recto")
+        .a11y_hidden()
+        .inert()
+        .pin(Some(x), Some(y), None, None)
+        .size(w, h);
+    match kind {
+        Kind::Cover => sheet.pixels(&tex.cover).child(
             col()
                 .pin(Some(0.0), Some(BOOK_H * 0.71), None, None)
                 .size(w, 44.0)
                 .center()
-                .opacity(if on_right {
-                    (reach.abs() - 0.3).max(0.0) / 0.7
-                } else {
-                    0.0
-                })
                 // Pressed in: the dark of the impression above, the gold in it.
                 .child(
                     el().child(
@@ -816,20 +847,28 @@ fn leaf(i: usize, kind: Kind, u: f32, face: Option<El>, tex: &paper::Textures) -
                     ),
                 ),
         ),
-        Kind::Leaf { .. } => match face.filter(|_| on_right) {
-            // The writing, foreshortened away as the page stands up.
-            Some(face) => sheet.child(
-                el().pin(Some(0.0), Some(lift), None, None)
-                    .size(PAGE_W, PAGE_H)
-                    .opacity(reach.abs().powf(0.6))
-                    .child(face),
-            ),
-            None => sheet,
-        },
-    };
-    let sheet = sheet.child(light);
+        Kind::Leaf { forward, from } => {
+            let line = if forward { from } else { s.selection() };
+            let face = rows
+                .get(line)
+                .map(|r| entry_page("leaf-entry", Some(r), command_of(s, r), v, look));
+            let sheet = sheet.pixels(&tex.leaf_right);
+            match face {
+                Some(face) => sheet.child(face),
+                None => sheet,
+            }
+        }
+    }
+}
+
+/// One leaf, `u` of the way over (`pose`), casting a shadow on the page it's leaving. Its
+/// `sheet` is drawn unless the compositor draws it.
+fn leaf(i: usize, kind: Kind, u: f32, sheet: bool, tex: &paper::Textures) -> El {
+    let pose = pose(kind, u);
+    let [x, y, w, h] = pose.rect;
+    let (on_right, stand) = (pose.on_right, pose.stand);
     // Its shadow falls on the page beside its free edge.
-    let fall = 34.0 * theta.sin();
+    let fall = 34.0 * pose.theta.sin();
     let shadow = el()
         .pin(
             Some(if on_right { x + w } else { x - fall }),
@@ -852,9 +891,42 @@ fn leaf(i: usize, kind: Kind, u: f32, face: Option<El>, tex: &paper::Textures) -
                 ]
             },
         );
-    el().key(format!("leaf-{i}"))
+    let leaf = el()
+        .key(format!("leaf-{i}"))
         .pin(Some(0.0), Some(0.0), None, None)
         .size(BOOK_W, BOOK_H)
-        .child(shadow)
-        .child(sheet)
+        .child(shadow);
+    if !sheet {
+        return leaf;
+    }
+    let picture = match (kind, on_right) {
+        (Kind::Cover, true) => &tex.cover,
+        (Kind::Cover, false) => &tex.inside,
+        (Kind::Leaf { .. }, true) => &tex.leaf_right,
+        (Kind::Leaf { .. }, false) => &tex.leaf_left,
+    };
+    // Shaded as it stands, darkest at the spine. Its back is blank: nothing written to bend.
+    let shade = Color::BLACK.alpha(0.1 + 0.45 * stand);
+    let (from, to) = if on_right {
+        (shade, Color::BLACK.alpha(0.12 * stand))
+    } else {
+        (Color::BLACK.alpha(0.12 * stand), shade)
+    };
+    leaf.child(
+        el().pin(Some(x), Some(y), None, None)
+            .size(w, h)
+            .pixels(picture)
+            .box_shadow(Shadow {
+                x: if on_right { 6.0 } else { -6.0 } * stand,
+                y: 4.0 + 4.0 * stand,
+                blur: 14.0 * stand + 2.0,
+                spread: 0.0,
+                color: Color::BLACK.alpha(0.4 * stand),
+                inset: false,
+            })
+            .child(
+                el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                    .linear_gradient(FRAC_PI_2, [(0.0, from), (1.0, to)]),
+            ),
+    )
 }

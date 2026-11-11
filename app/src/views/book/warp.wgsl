@@ -16,11 +16,17 @@ struct U {
     // The open pages' top and bottom; the light's sideways reach; how far the slot reaches
     // past the book on every side, for pages bulging over its edges.
     page: vec4<f32>,
+    // The sheet turning face up on the right (`leaf_on.x` > 0.5 when there is one): where it
+    // lies flat in the capture, where it shows now, and how upright it stands (`leaf_on.y`).
+    leaf_flat: vec4<f32>,
+    leaf_now: vec4<f32>,
+    leaf_on: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var backdrop: texture_2d<f32>;
 @group(0) @binding(2) var smp: sampler;
+@group(0) @binding(3) var leaf: texture_2d<f32>;
 
 // How high a page stands (points) and how fast it rises out of the gutter.
 const RISE: f32 = 17.0;
@@ -128,6 +134,21 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     }
     src = mix(p, src, strength);
     shade = mix(1.0, shade, strength);
+
+    // The turning sheet: its capture, squeezed to the width it shows at and lifted as it
+    // stands, writing and all, then curved with the pages like everything else.
+    let r = u.leaf_now;
+    if (u.leaf_on.x > 0.5 && src.x >= r.x && src.x < r.x + r.z && src.y >= r.y && src.y < r.y + r.w) {
+        let a = (src.x - r.x) / r.z;
+        let b = (src.y - r.y) / r.w;
+        let flat = u.leaf_flat.xy + vec2<f32>(a, b) * u.leaf_flat.zw;
+        let luv = (u.rect.xy + (flat + vec2<f32>(u.page.w)) * scale) / u.k.zw;
+        let lc = textureSampleLevel(leaf, smp, luv, 0.0);
+        // Darkest at the spine as it stands; a little shaded all over.
+        let stand = u.leaf_on.y;
+        let lit = 1.0 - (0.1 + 0.45 * stand) * (1.0 - a) - 0.12 * stand * a;
+        return vec4<f32>(lc.rgb * lit, lc.a);
+    }
 
     let uv = (u.rect.xy + (src + vec2<f32>(u.page.w)) * scale) / u.k.zw;
     let c = textureSampleLevel(backdrop, smp, uv, 0.0);

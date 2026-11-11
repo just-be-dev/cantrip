@@ -814,3 +814,28 @@ fn moving_through_the_book_turns_leaves_on_the_frame_clock() {
         s.changed();
     });
 }
+
+#[test]
+fn a_turning_leaf_is_captured_with_its_writing_for_the_compositor() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "open grimoire");
+    press(&mut rt, Key::Enter);
+    // The book's leaves turn on the frame clock: start one, and catch it mid-air.
+    press(&mut rt, Key::Down);
+    rt.update(|s, tx| {
+        s.animate_book(10.0, tx);
+        s.animate_book(10.05, tx);
+    });
+    settle(&mut rt);
+    assert!(rt.find("turning").is_some(), "lying flat under the capture slot");
+    assert!(rt.find("page-capture").is_some());
+    assert!(
+        rt.find("leaf-entry-spell:uuid.ts:uuid").is_some(),
+        "with the entry it turns away written on it"
+    );
+    rt.update(|s, tx| {
+        s.animate_book(11.0, tx);
+    });
+    settle(&mut rt);
+    assert!(rt.find("turning").is_none(), "gone once it lands");
+}
