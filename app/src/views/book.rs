@@ -12,6 +12,7 @@
 //! There is one book: leather, brass and parchment, painted once into pictures (`paper.rs`).
 //! The theme only picks the inks it's written in (`Ink`).
 
+mod initial;
 mod paper;
 mod warp;
 
@@ -57,6 +58,14 @@ const TURN: f64 = 0.42;
 const COVER: f64 = 0.62;
 /// At most this many leaves in the air: holding an arrow riffles through the pages.
 const MAX_LEAVES: usize = 3;
+/// How long an initial takes to grow in, and how long after its page has settled it starts
+/// (once the ink has seeped in).
+const GROW: f64 = 1.1;
+const GROW_AFTER: f64 = 0.3;
+/// How long the writing takes to seep into the pages once the cover has landed.
+const INK_IN: f64 = 0.6;
+/// The illuminated initial, square.
+const ILLUMINATION: f32 = 62.0;
 
 /// Where line `index` of the index sits in its scroll content, top and bottom.
 pub fn index_span(index: usize) -> (f32, f32) {
@@ -74,6 +83,13 @@ pub struct Book {
     pub selection: usize,
     pub leaves: Leaves,
     sources: std::cell::RefCell<std::collections::HashMap<String, Option<std::rc::Rc<str>>>>,
+    /// The illuminated initials, built and painted so far.
+    illuminations: std::rc::Rc<std::cell::RefCell<initial::Illuminations>>,
+    /// When each entry's initial began growing in (frame-clock seconds), by line id: once the
+    /// page it's on has settled, the first time.
+    grown: std::cell::RefCell<std::collections::HashMap<String, f64>>,
+    /// Every initial has already grown in: the book was read through long ago.
+    pub read_through: bool,
 }
 
 impl Book {
@@ -82,6 +98,69 @@ impl Book {
         let mut book = Book::default();
         book.leaves.push(Kind::Cover);
         book
+    }
+
+    /// The illuminated initial of line `r`'s entry, as far as it has grown in. `settled`: the
+    /// page it's on lies open, so it starts growing if it hasn't. None for a title that doesn't
+    /// begin with a letter.
+    fn initial(&self, r: &Row, settled: bool, v: Ink, look: Look) -> Option<rune::Pixels> {
+        let letter = r.title.chars().next().filter(char::is_ascii_alphabetic)?;
+        let now = self.leaves.now;
+        let t = if look.still || self.read_through {
+            1.0
+        } else {
+            let mut grown = self.grown.borrow_mut();
+            let began = match grown.get(&r.id) {
+                Some(&began) => Some(began),
+                None if settled => {
+                    grown.insert(r.id.clone(), now + GROW_AFTER);
+                    Some(now + GROW_AFTER)
+                }
+                None => None,
+            };
+            match began {
+                Some(began) => {
+                    let until = began + GROW;
+                    if until > self.leaves.growing.get() {
+                        self.leaves.growing.set(until);
+                    }
+                    // In steps of a thirtieth of a second: each is a new picture to paint.
+                    let u = ((now - began) / GROW).clamp(0.0, 1.0);
+                    let u = ((u * GROW * 30.0).round() / (GROW * 30.0)) as f32;
+                    1.0 - (1.0 - u) * (1.0 - u)
+                }
+                None => 0.0,
+            }
+        };
+        let px = (ILLUMINATION * look.scale).round() as u32;
+        Some(
+            self.illuminations
+                .borrow_mut()
+                .pixels(&r.id, letter, t, px, &v.print),
+        )
+    }
+
+    /// When the initial of line `id` began growing in, if it has.
+    #[cfg(test)]
+    pub fn grown_at(&self, id: &str) -> Option<f64> {
+        self.grown.borrow().get(id).copied()
+    }
+
+    /// Builds the initials of `rows` ahead, nearest the highlight first.
+    fn prepare_initials(&self, rows: &[Row], selection: usize, look: Look) {
+        let mut wants: Vec<(usize, String, char)> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                let letter = r.title.chars().next().filter(char::is_ascii_alphabetic)?;
+                Some((i.abs_diff(selection), r.id.clone(), letter))
+            })
+            .collect();
+        wants.sort_by_key(|w| w.0);
+        let px = (ILLUMINATION * look.scale).round() as u32;
+        self.illuminations
+            .borrow_mut()
+            .prepare(wants.into_iter().map(|(_, id, c)| (id, c)), px);
     }
 
     /// The highlight moved to `index`: turn a leaf toward it.
@@ -124,6 +203,10 @@ pub struct Leaves {
     drawing: bool,
     /// Reduce Motion is on: leaves don't turn.
     pub still: bool,
+    /// An initial is growing in until then (frame-clock seconds), so frames keep coming.
+    growing: std::cell::Cell<f64>,
+    /// When the cover landed, for the writing seeping into the pages after (`ink`).
+    opened: Option<f64>,
 }
 
 impl Leaves {
@@ -153,11 +236,20 @@ impl Leaves {
         }
         // A turn that has run its course is drawn once landed, then goes: frames rarely fall
         // on its last instant, and one caught short of it would jump to what it lands on.
+        if self
+            .turns
+            .iter()
+            .any(|turn| turn.landed && turn.kind == Kind::Cover)
+        {
+            self.opened = Some(t);
+        }
         self.turns.retain(|turn| !turn.landed);
         for turn in &mut self.turns {
             turn.landed = t - turn.began.unwrap_or(t) >= turn.kind.duration();
         }
-        let drawing = !self.turns.is_empty();
+        let drawing = !self.turns.is_empty()
+            || t < self.growing.get()
+            || self.opened.is_some_and(|o| t < o + INK_IN);
         if drawing {
             tx.wake_after(std::time::Duration::ZERO);
         }
@@ -205,6 +297,22 @@ impl Leaves {
                 Kind::Cover => None,
             })
             .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+    }
+
+    /// How much of the writing has seeped into the pages: none while the cover swings over,
+    /// then all of it over `INK_IN`. Every face with an entry on it wears the same, so a leaf
+    /// lands exactly as the page beneath.
+    fn ink(&self) -> f32 {
+        if self.cover().is_some() {
+            return 0.0;
+        }
+        match self.opened {
+            Some(o) => {
+                let u = ((self.now - o) / INK_IN).clamp(0.0, 1.0) as f32;
+                1.0 - (1.0 - u).powi(3)
+            }
+            None => 1.0,
+        }
     }
 
     /// How far the cover has swung, while it's opening.
@@ -480,6 +588,8 @@ struct Ink {
     gilt: Color,
     /// The letter of an illuminated initial.
     letter: Color,
+    /// What the initials are printed in (`initial`): ink, rubric, gold and a blue, as sRGB.
+    print: initial::Inks,
 }
 
 fn ink(theme: Theme) -> Ink {
@@ -490,6 +600,13 @@ fn ink(theme: Theme) -> Ink {
             rubric: srgb(0.58, 0.14, 0.09, 1.0),
             gilt: srgb(0.80, 0.62, 0.28, 1.0),
             letter: srgb(0.96, 0.82, 0.50, 1.0),
+            print: initial::Inks {
+                ink: [0.20, 0.12, 0.07],
+                rubric: [0.58, 0.14, 0.09],
+                gilt: [0.80, 0.62, 0.28],
+                // Lapis.
+                azure: [0.16, 0.26, 0.52],
+            },
         },
         // Oak-gall black with a violet cast, murex purple, and gold leaf.
         Theme::Arcane => Ink {
@@ -497,6 +614,13 @@ fn ink(theme: Theme) -> Ink {
             rubric: srgb(0.45, 0.14, 0.52, 1.0),
             gilt: srgb(0.80, 0.62, 0.28, 1.0),
             letter: srgb(0.97, 0.84, 0.56, 1.0),
+            print: initial::Inks {
+                ink: [0.16, 0.09, 0.24],
+                rubric: [0.45, 0.14, 0.52],
+                gilt: [0.80, 0.62, 0.28],
+                // Woad, dark towards night.
+                azure: [0.14, 0.24, 0.48],
+            },
         },
     }
 }
@@ -634,13 +758,17 @@ struct Writing<'a> {
 
 impl Writing<'_> {
     /// The left page of `line`'s spread: its entry, under an illuminated initial.
-    fn entry(&self, key: &str, line: usize) -> El {
+    /// `settled`: it's the page open on the left, nothing in the air over it, so its initial
+    /// grows in if it hasn't yet.
+    fn entry(&self, key: &str, line: usize, settled: bool) -> El {
         let r = self.rows.get(line);
+        let initial = r.and_then(|r| self.book.initial(r, settled, self.v, self.look));
         entry_page(
             key,
             r,
             r.and_then(|r| command_of(self.s, r)),
             r.map(|r| facts(self.s, r)),
+            initial,
             self.v,
             self.look,
         )
@@ -685,6 +813,7 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
         .beneath()
         .filter(|(_, hi)| *hi < rows.len())
         .unwrap_or((s.selection(), s.selection()));
+    book.prepare_initials(&rows, s.selection(), look);
     let left_picture = |line: usize| &tex.pages_left[variant_left(rows.get(line))];
     let right_picture = |line: usize| &tex.pages_right[variant_right(rows.get(line))];
     // While the cover swings over, the left side is bare desk; the cover lands as it.
@@ -749,7 +878,7 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
             .child(flat_face(
                 paper::page_rect(true),
                 left_picture(back),
-                Some(write.entry("leaf-entry", back)),
+                Some(write.entry("leaf-entry", back, false).opacity(book.leaves.ink())),
             ))
             .child(warp::capture(true))
             .child(binding(true, &tex, "binding-left-again"))
@@ -763,9 +892,8 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
         // The entry's ink seeps into the page once the cover has landed.
         .child(
             page(true)
-                .opacity(if opening { 0.0 } else { 1.0 })
-                .opacity_motion(rune::Spring::new(0.7, 0.0))
-                .child(write.entry("entry", lo)),
+                .opacity(book.leaves.ink())
+                .child(write.entry("entry", lo, book.leaves.turns.is_empty())),
         )
         .child(page(false).child(write.source("source", hi)))
         .child(leaves(
@@ -1032,6 +1160,7 @@ fn entry_page(
     r: Option<&Row>,
     command: Option<&WireCommand>,
     facts: Option<Facts>,
+    initial_pixels: Option<rune::Pixels>,
     v: Ink,
     look: Look,
 ) -> El {
@@ -1058,35 +1187,15 @@ fn entry_page(
     let mut chars = r.title.chars();
     let initial: String = chars.next().map(String::from).unwrap_or_default();
     let rest: String = chars.collect();
-    // An illuminated initial: a gilt frame round a rubric field, the letter in leaf.
-    let illumination = el()
-        .size(50.0, 50.0)
-        .center()
-        .radius(3.0)
-        .fill(v.rubric)
-        .radial_gradient(
-            [0.3, 0.25],
-            60.0,
-            [
-                (0.0, Color::WHITE.alpha(0.18)),
-                (1.0, Color::BLACK.alpha(0.25)),
-            ],
-        )
-        .border(2.0, v.gilt)
-        .box_shadow(Shadow {
-            x: 1.0,
-            y: 2.0,
-            blur: 3.0,
-            spread: 0.0,
-            color: srgb(0.25, 0.12, 0.04, 0.45),
-            inset: false,
-        })
-        .child(
-            el().pin(Some(3.5), Some(3.5), Some(3.5), Some(3.5))
-                .radius(1.5)
-                .border(1.0, v.gilt.alpha(0.55)),
-        )
-        .child(text(initial).font(hand(36.0)).color(v.letter));
+    // An illuminated initial (`initial`), or for a title that doesn't start with a letter, a
+    // gilt frame round a rubric field with it in leaf.
+    let illumination = match initial_pixels {
+        Some(p) => el()
+            .size(ILLUMINATION, ILLUMINATION)
+            .pixels(&p)
+            .a11y_hidden(),
+        None => plain_initial(&initial, v),
+    };
     let state = row_state(r);
     let mode = match (state, command.map(|c| c.mode)) {
         (RowState::Dormant, _) => "disabled",
@@ -1164,6 +1273,39 @@ fn entry_page(
     page.child(entry).child(folio(&folio_of(Some(r), false), v))
 }
 
+/// A gilt frame round a rubric field with the letter in leaf: the initial of a title that
+/// doesn't begin with a letter.
+fn plain_initial(initial: &str, v: Ink) -> El {
+    el()
+    .size(50.0, 50.0)
+    .center()
+    .radius(3.0)
+    .fill(v.rubric)
+    .radial_gradient(
+        [0.3, 0.25],
+        60.0,
+        [
+            (0.0, Color::WHITE.alpha(0.18)),
+            (1.0, Color::BLACK.alpha(0.25)),
+        ],
+    )
+    .border(2.0, v.gilt)
+    .box_shadow(Shadow {
+        x: 1.0,
+        y: 2.0,
+        blur: 3.0,
+        spread: 0.0,
+        color: srgb(0.25, 0.12, 0.04, 0.45),
+        inset: false,
+    })
+    .child(
+        el().pin(Some(3.5), Some(3.5), Some(3.5), Some(3.5))
+            .radius(1.5)
+            .border(1.0, v.gilt.alpha(0.55)),
+    )
+    .child(text(initial.to_string()).font(hand(36.0)).color(v.letter))
+}
+
 /// What the book records of a spell beside its entry.
 struct Facts {
     status: Status,
@@ -1189,11 +1331,10 @@ enum Status {
 
 /// The entry (file or directory) a line of the index belongs to.
 fn entry_id(r: &Row) -> &str {
-    let id = r
-        .id
-        .strip_prefix("spell:")
-        .or_else(|| r.id.strip_prefix("entry:"))
-        .unwrap_or(&r.id);
+    let id =
+        r.id.strip_prefix("spell:")
+            .or_else(|| r.id.strip_prefix("entry:"))
+            .unwrap_or(&r.id);
     id.split(':').next().unwrap_or(id)
 }
 
@@ -1236,7 +1377,11 @@ fn ledger(facts: &Facts, state: RowState, v: Ink) -> El {
         Status::Enabled => (alive, true, "Enabled".to_string()),
         Status::Running => (alive, true, "Running in the menu bar".to_string()),
         Status::Idle => (v.ink.alpha(0.5), false, "Enabled, not running".to_string()),
-        Status::Disabled => (v.ink.alpha(0.5), false, "Disabled · ↵ to enable".to_string()),
+        Status::Disabled => (
+            v.ink.alpha(0.5),
+            false,
+            "Disabled · ↵ to enable".to_string(),
+        ),
     };
     let (seal, status) = match &facts.error {
         Some(_) => (v.rubric, "Fails to load".to_string()),
@@ -1596,12 +1741,19 @@ mod tests {
     #[test]
     fn each_entry_records_whether_it_is_alive() {
         let s = book();
-        assert!(status_of(&s, "insomnia").0 == Status::Running, "its item is in the menu bar");
+        assert!(
+            status_of(&s, "insomnia").0 == Status::Running,
+            "its item is in the menu bar"
+        );
         assert!(status_of(&s, "clock").0 == Status::Idle);
         assert!(status_of(&s, "ghost").0 == Status::Disabled);
         let (status, error, cast) = status_of(&s, "Hello");
         assert!(status == Status::Enabled);
-        assert_eq!(error.as_deref(), Some("Cannot find module 'nope'"), "and why it fails");
+        assert_eq!(
+            error.as_deref(),
+            Some("Cannot find module 'nope'"),
+            "and why it fails"
+        );
         assert_eq!(cast, 3, "as often as it was cast");
         assert_eq!(status_of(&s, "Git Branches").1, None);
     }

@@ -525,6 +525,7 @@ dependencies = [
  "rune-kit",
  "serde",
  "serde_json",
+ "tiny-skia",
  "wgpu",
 ]
 

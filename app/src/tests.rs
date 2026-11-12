@@ -887,15 +887,68 @@ fn moving_through_the_book_turns_leaves_on_the_frame_clock() {
             book.leaves.frame(2.05, || false, tx),
             "then gone, which the view must draw"
         );
-        assert!(!book.leaves.frame(2.1, || false, tx), "then still");
+        assert!(
+            book.leaves.frame(2.4, || false, tx),
+            "while the writing seeps into the pages"
+        );
+        assert!(book.leaves.frame(2.7, || false, tx));
+        assert!(!book.leaves.frame(2.75, || false, tx), "then still");
         book.select(1);
         assert!(
-            !book.leaves.frame(2.2, || true, tx),
+            !book.leaves.frame(2.8, || true, tx),
             "Reduce Motion turns none"
         );
         assert!(book.leaves.still);
         s.changed();
     });
+}
+
+#[test]
+fn an_initial_grows_in_once_its_page_has_settled() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "open grimoire");
+    press(&mut rt, Key::Enter);
+    let first = rt.state.rows()[0].id.clone();
+    let second = rt.state.rows()[1].id.clone();
+    let grown = |rt: &rune::Runtime<Cantrip>, id: &str| {
+        rt.state.book.as_ref().and_then(|b| b.grown_at(id))
+    };
+    // Under the cover, nothing grows.
+    rt.update(|s, tx| {
+        s.animate_book(10.0, tx);
+        s.animate_book(10.3, tx);
+    });
+    settle(&mut rt);
+    assert_eq!(grown(&rt, &first), None, "not while the cover is in the air");
+    // Landed: its initial starts growing once the ink has seeped in, and frames keep coming
+    // until it has.
+    rt.update(|s, tx| {
+        s.animate_book(10.7, tx);
+        s.animate_book(10.75, tx);
+    });
+    settle(&mut rt);
+    let began = grown(&rt, &first).expect("growing");
+    assert!(began > 10.7, "a moment after it settles");
+    rt.update(|s, tx| assert!(s.animate_book(began + 0.5, tx), "still growing"));
+    settle(&mut rt);
+    rt.update(|s, tx| {
+        s.animate_book(began + 2.0, tx);
+        assert!(!s.animate_book(began + 2.1, tx), "grown, and still");
+    });
+    // The next spell's grows once the leaf has landed on it, not while it's in the air.
+    press(&mut rt, Key::Down);
+    rt.update(|s, tx| {
+        s.animate_book(20.0, tx);
+        s.animate_book(20.2, tx);
+    });
+    settle(&mut rt);
+    assert_eq!(grown(&rt, &second), None);
+    rt.update(|s, tx| {
+        s.animate_book(20.5, tx);
+        s.animate_book(20.55, tx);
+    });
+    settle(&mut rt);
+    assert!(grown(&rt, &second).is_some());
 }
 
 #[test]

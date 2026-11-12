@@ -280,6 +280,8 @@ fn grimoire(s: &mut Cantrip) {
         // Opened long ago: no cover in the air.
         *book = crate::views::book::Book::default();
         book.selection = 2;
+        // Read through long ago: every initial has grown in.
+        book.read_through = true;
     }
     write_incantations(s);
     s.changed();
