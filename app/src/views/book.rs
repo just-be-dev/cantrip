@@ -411,7 +411,11 @@ pub fn rows(commands: &[WireCommand], entries: &[WireEntry], query: &str) -> Vec
         } else {
             vec![toggle(e, true), reveal(&e.id)]
         };
-        let mut words = vec![e.title.clone(), e.id.clone(), e.summary.clone().unwrap_or_default()];
+        let mut words = vec![
+            e.title.clone(),
+            e.id.clone(),
+            e.summary.clone().unwrap_or_default(),
+        ];
         words.push(if e.enabled { "enabled" } else { "disabled" }.into());
         lines.push((
             Row {
@@ -632,7 +636,13 @@ impl Writing<'_> {
     /// The left page of `line`'s spread: its entry, under an illuminated initial.
     fn entry(&self, key: &str, line: usize) -> El {
         let r = self.rows.get(line);
-        entry_page(key, r, r.and_then(|r| command_of(self.s, r)), self.v, self.look)
+        entry_page(
+            key,
+            r,
+            r.and_then(|r| command_of(self.s, r)),
+            self.v,
+            self.look,
+        )
     }
 
     /// The right page of `line`'s spread: its incantation, as written in its file. A line
@@ -725,7 +735,11 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
             .child(face)
             .child(warp::capture(false))
             .child(binding(false, &tex, "binding-right-again"))
-            .child(page_picture_at(false, right_picture(hi), "page-right-again"));
+            .child(page_picture_at(
+                false,
+                right_picture(hi),
+                "page-right-again",
+            ));
         turning = true;
     }
     if let Some((_, Kind::Leaf { hi: back, .. }, _)) = book.leaves.verso() {
@@ -1012,13 +1026,7 @@ fn folio_of(r: Option<&Row>, right: bool) -> String {
     (2 * n + usize::from(right)).to_string()
 }
 
-fn entry_page(
-    key: &str,
-    r: Option<&Row>,
-    command: Option<&WireCommand>,
-    v: Ink,
-    look: Look,
-) -> El {
+fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink, look: Look) -> El {
     let page = col()
         .w_full()
         .h_full()
@@ -1206,14 +1214,18 @@ fn source_page(key: &str, r: Option<&Row>, id: Option<&str>, source: Option<&str
                     || trimmed.starts_with("/*")
                     || trimmed.starts_with('*');
                 lines = lines.child(
-                    text(if line.is_empty() { " ".into() } else { line.to_string() })
-                        .font(mono(9.0).lh(12.4))
-                        .color(if comment {
-                            v.rubric.alpha(0.62)
-                        } else {
-                            v.ink.alpha(0.86)
-                        })
-                        .truncate_fade(),
+                    text(if line.is_empty() {
+                        " ".into()
+                    } else {
+                        line.to_string()
+                    })
+                    .font(mono(9.0).lh(12.4))
+                    .color(if comment {
+                        v.rubric.alpha(0.62)
+                    } else {
+                        v.ink.alpha(0.86)
+                    })
+                    .truncate_fade(),
                 );
             }
             lines
@@ -1241,7 +1253,8 @@ fn source_page(key: &str, r: Option<&Row>, id: Option<&str>, source: Option<&str
                 .clip_fade(0.0, 0.0, 0.0, 22.0)
                 .child(body),
         );
-    page.child(writing).child(folio(&folio_of(Some(r), true), v))
+    page.child(writing)
+        .child(folio(&folio_of(Some(r), true), v))
 }
 
 // MARK: Leaves

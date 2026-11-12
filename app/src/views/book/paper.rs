@@ -6,8 +6,8 @@
 //!
 //! Pages are pictures of their own, laid over the binding, so a leaf that turns is exactly the
 //! page it lifts off and exactly the page it lands on. Pages come in `VARIANTS` either side,
-//! each worn its own way (`Wear`), so leafing through shows different stains, spots, burns,
-//! blots and wax.
+//! each worn its own way (`Wear`), so leafing through shows different stains, spots and
+//! burns.
 //!
 //! The book is the same in every theme; only its inks change (`book.rs`, `Ink`). Everything
 //! here is in points of the spread (`BOOK_W` × `BOOK_H`), sampled at each pixel's centre, and
@@ -319,8 +319,7 @@ fn brass_shadow(cx: f32, cy: f32, x: f32, y: f32) -> f32 {
 // MARK: Parchment
 
 /// How a page has worn: where in the skin it was cut (`at`, an offset into the noise), and how
-/// strongly it shows each kind of wear. A blot of ink or a drop of wax sits at (`u`, `v`) of
-/// the page (0 at the spine and top, 1 at the fore-edge and foot), `r` points across.
+/// strongly it shows each kind of wear.
 pub struct Wear {
     at: [f32; 2],
     tide: f32,
@@ -331,11 +330,9 @@ pub struct Wear {
     /// How yellowed and darkened with age, from paler than the rest (below 0) to well
     /// browned (1).
     age: f32,
-    blot: Option<[f32; 3]>,
-    wax: Option<[f32; 3]>,
 }
 
-/// Each page's wear, either side (a side mirrors where its blots and wax lie).
+/// Each page's wear, either side.
 const WEAR: [Wear; VARIANTS] = [
     Wear {
         at: [0.0, 0.0],
@@ -344,8 +341,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 1.0,
         age: 0.15,
         ghost: 0.4,
-        blot: None,
-        wax: None,
     },
     Wear {
         at: [611.0, 287.0],
@@ -354,8 +349,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 0.9,
         age: 0.45,
         ghost: 0.9,
-        blot: Some([0.84, 0.9, 8.0]),
-        wax: None,
     },
     Wear {
         at: [1931.0, 1213.0],
@@ -364,8 +357,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 1.0,
         age: -0.25,
         ghost: 0.3,
-        blot: None,
-        wax: Some([0.8, 0.12, 12.0]),
     },
     Wear {
         at: [2477.0, 389.0],
@@ -374,8 +365,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 1.4,
         age: 0.7,
         ghost: 0.6,
-        blot: None,
-        wax: None,
     },
     Wear {
         at: [3313.0, 2861.0],
@@ -384,8 +373,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 0.8,
         age: 0.1,
         ghost: 1.0,
-        blot: Some([0.7, 0.85, 5.0]),
-        wax: Some([0.86, 0.78, 9.0]),
     },
     Wear {
         at: [4129.0, 1777.0],
@@ -394,8 +381,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 0.7,
         age: -0.35,
         ghost: 0.5,
-        blot: None,
-        wax: None,
     },
     Wear {
         at: [5281.0, 3407.0],
@@ -404,8 +389,6 @@ const WEAR: [Wear; VARIANTS] = [
         burn: 1.25,
         age: 0.55,
         ghost: 0.7,
-        blot: None,
-        wax: Some([0.6, 0.88, 13.0]),
     },
 ];
 
@@ -476,36 +459,6 @@ fn ghost(x: f32, y: f32, u: f32, v: f32, wear: &Wear) -> f32 {
     wear.ghost * 0.12 * stroke * word * letters * ends
 }
 
-/// A spill of ink: ragged at its edge, with splashes round it. Coverage, 0 to 1.
-fn blot(x: f32, y: f32, at: [f32; 2], r: f32) -> f32 {
-    let (dx, dy) = (x - at[0], y - at[1]);
-    let d = dx.hypot(dy);
-    let a = dy.atan2(dx);
-    let edge = r * (0.75 + 0.5 * noise(a.cos() * 2.0 + 9.0, a.sin() * 2.0, 81));
-    let body = smooth(edge + 0.6, edge - 0.6, d);
-    let splash = spots(x, y, 3.5, 82, 0.5) * smooth(r * 2.6, r * 1.1, d);
-    body.max(splash * 0.9)
-}
-
-/// A drop of candle wax: a greasy halo soaked into the page, the pale pool on it with a run
-/// down from it, a raised rim and a glint. (Grease, cover, lightness.)
-fn wax(x: f32, y: f32, at: [f32; 2], r: f32) -> (f32, f32, f32) {
-    let (dx, dy) = (x - at[0], y - at[1]);
-    // A run trickling down from the pool.
-    let run = smooth(r * 0.32, r * 0.18, (dx + 0.15 * dy).abs())
-        * smooth(r * 2.2, r * 1.6, dy)
-        * smooth(-0.2, 0.2, dy);
-    let d = dx.hypot(dy);
-    let a = dy.atan2(dx);
-    let edge = r * (0.8 + 0.35 * noise(a.cos() * 1.5 + 4.0, a.sin() * 1.5, 91));
-    let pool = smooth(edge + 0.5, edge - 0.5, d).max(run);
-    let grease = smooth(edge * 1.9, edge, d).max(run * 0.6) * 0.5;
-    let rim = smooth(1.2, 0.0, (d - edge + 0.7).abs()) * 0.6;
-    // Lit from the upper left.
-    let glint = smooth(r * 0.35, 0.0, (dx + r * 0.3).hypot(dy + r * 0.3));
-    (grease, pool * 0.72, rim * pool.max(0.3) + glint * pool)
-}
-
 /// A page at (`x`, `y`) in the spread, worn as `wear` has it: tattered at its outer edges,
 /// curving into the gutter, lit by the candle. Clear past its edge.
 fn page(x: f32, y: f32, wear: &Wear) -> [f32; 4] {
@@ -521,23 +474,6 @@ fn page(x: f32, y: f32, wear: &Wear) -> [f32; 4] {
     let (u, v) = (g / PAGE_W, top / PAGE_H);
     let mut c = parchment(x, y, edge.max(0.0), wear);
     c = mix(c, STAIN, ghost(if left { -x } else { x }, y, u, v, wear));
-    if let Some([bu, bv, r]) = wear.blot {
-        let at = [
-            SPINE + (if left { -1.0 } else { 1.0 }) * bu * PAGE_W,
-            PAGE_INSET_Y + bv * PAGE_H,
-        ];
-        c = mix(c, [0.17, 0.10, 0.06], 0.82 * blot(x, y, at, r));
-    }
-    if let Some([wu, wv, r]) = wear.wax {
-        let at = [
-            SPINE + (if left { -1.0 } else { 1.0 }) * wu * PAGE_W,
-            PAGE_INSET_Y + wv * PAGE_H,
-        ];
-        let (grease, cover, light) = wax(x, y, at, r);
-        c = mix(c, scale(c, 0.78), grease);
-        c = mix(c, [0.95, 0.9, 0.74], cover);
-        c = mix(c, [1.0, 0.98, 0.93], light.min(1.0) * 0.8);
-    }
     let c = scale(c, curve(g, 1.0 - u, 1.0) * candle(x, y));
     [c[0], c[1], c[2], smooth(-0.6, 0.6, inside)]
 }

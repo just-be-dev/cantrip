@@ -721,14 +721,23 @@ fn the_grimoire_opens_as_a_book_to_leaf_through_and_cast_from() {
         "every spell, alphabetical, and nothing else"
     );
     assert_eq!(rt.state.rows()[2].accessories, ["3"], "each with its folio");
-    assert!(rt.find("entry-spell:uuid.ts:uuid").is_some(), "its entry on the left");
-    assert!(rt.find("source-spell:uuid.ts:uuid").is_some(), "its incantation on the right");
+    assert!(
+        rt.find("entry-spell:uuid.ts:uuid").is_some(),
+        "its entry on the left"
+    );
+    assert!(
+        rt.find("source-spell:uuid.ts:uuid").is_some(),
+        "its incantation on the right"
+    );
 
     // The arrows turn the pages; the spread beneath is the one turned from until they land.
     press(&mut rt, Key::Down);
     press(&mut rt, Key::Down);
     assert_eq!(rt.state.selection(), 2);
-    assert!(rt.find("entry-spell:uuid.ts:uuid").is_some(), "still in the air");
+    assert!(
+        rt.find("entry-spell:uuid.ts:uuid").is_some(),
+        "still in the air"
+    );
     rt.update(|s, tx| {
         for t in [10.0, 11.0, 11.05] {
             s.animate_book(t, tx);
@@ -933,8 +942,16 @@ fn an_incantation_is_copied_out_from_its_export() {
     use crate::views::book::excerpt;
     let file = "import x from \"y\"\n\nconst helper = 1\n\n// Says hello.\n/** Twice. */\nexport const hello = Spell.make({\n\ttitle: \"Hi\"\n})\n\nexport default Spell.make({})\n";
     assert_eq!(
-        excerpt("greet:hello", file).lines().take(4).collect::<Vec<_>>(),
-        ["// Says hello.", "/** Twice. */", "export const hello = Spell.make({", "  title: \"Hi\""],
+        excerpt("greet:hello", file)
+            .lines()
+            .take(4)
+            .collect::<Vec<_>>(),
+        [
+            "// Says hello.",
+            "/** Twice. */",
+            "export const hello = Spell.make({",
+            "  title: \"Hi\""
+        ],
         "from the comments over it, tabs as spaces"
     );
     assert_eq!(
