@@ -3,6 +3,10 @@ bun = "1.4.4"
 # Rune pins its toolchain; keep this equal to app/rust-toolchain.toml.
 rust = "1.99.1"
 
+[hooks]
+# So `mise install` leaves a fresh checkout ready (Sesh's worktree setup relies on it).
+postinstall = "bun install --cwd runtime --frozen-lockfile"
+
 [tasks.install]
 description = "Install runtime dependencies"
 dir = "runtime"
