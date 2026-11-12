@@ -1,31 +1,24 @@
-//! Illuminated initials, after initialis (github.com/azlen/initialis, MIT, by Azlen Elza): a
-//! letter, its frame and ground, an ornament grown out of it, and two to four inks printed into
-//! the page. This is a subset of that engine in Rust (the growth in `ornament.rs`, the field it
-//! grows through in `field.rs`, leaves and flowers in `shapes.rs`, and the faces' capitals in
-//! `caps.rs`), drawn on the CPU like the pages are.
+//! Illuminated initials: a capital in its frame on a ground of ink, and around it a figure
+//! inscribed stroke by stroke. One kind to each theme (`Kind`), and each spell's drawn its own
+//! way from its id, so every page is a little different and always the same.
 //!
-//! Each spell has an initial of its own, seeded by its id (`Style::of`), so it's the same every
-//! time; the styles are the grimoire's own family (`Recipe`), in the theme's inks (`Inks`). An
-//! initial is built once (`Scene`) and painted at any moment of its growing in
-//! (`Scene::paint`), from the letter in its frame alone (0) to the ornament all grown (1).
+//! The capitals' outlines, and the way the inks are printed into the page (ragged edges,
+//! mottled density, burnished gold), come from initialis (github.com/azlen/initialis, MIT, by
+//! Azlen Elza); the figures are the grimoire's own. An initial is built once (`Scene`) and
+//! painted at any moment of its inscribing (`Scene::paint`), from the letter in its frame alone
+//! (0) to the figure all drawn (1).
 
 mod caps;
-mod field;
 mod geom;
-mod ornament;
-mod shapes;
 
 use std::collections::HashMap;
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::{Arc, Mutex};
 
 use tiny_skia::{FillRule, LineCap, LineJoin, Mask, Path, PathBuilder, Stroke, Transform};
 
 use caps::{Face, caps};
-use field::Field;
-use geom::{Box2, Noise, P, Rng, hash, offset_polygon};
-use ornament::{Items, Opts, Seed, Terminal, grow, sizes};
-use shapes::{Detail, Flower, Leaf};
+use geom::{Box2, Noise, P, Rng, circle_poly, hash, offset_polygon};
 
 /// The initial's own units: it's 1000 across.
 const W: f32 = 1000.0;
@@ -46,13 +39,16 @@ impl Inks {
             Slot::Rubric => Some(self.rubric),
             Slot::Gilt => Some(self.gilt),
             Slot::Azure => Some(self.azure),
-            Slot::Paper | Slot::None => None,
+            Slot::Paper => None,
         }
     }
 
     fn key(&self) -> u64 {
         let mut h: u64 = 1469598103934665603;
-        for v in [self.ink, self.rubric, self.gilt, self.azure].iter().flatten() {
+        for v in [self.ink, self.rubric, self.gilt, self.azure]
+            .iter()
+            .flatten()
+        {
             h ^= v.to_bits() as u64;
             h = h.wrapping_mul(1099511628211);
         }
@@ -68,7 +64,6 @@ enum Slot {
     Gilt,
     Azure,
     Paper,
-    None,
 }
 
 impl Slot {
@@ -78,92 +73,46 @@ impl Slot {
             Slot::Rubric => Some(1),
             Slot::Gilt => Some(2),
             Slot::Azure => Some(3),
-            Slot::Paper | Slot::None => None,
+            Slot::Paper => None,
         }
     }
 }
 
+/// The grimoire's initials: one kind to each theme.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Kind {
+    /// A seal: a gold blackletter capital over a magic circle on ink, a band of runes round
+    /// it, a star drawn through it, and sigils in the corners.
+    Seal,
+    /// A star chart: a gold Roman capital under an arch of night, with constellations, orbits, a
+    /// crescent moon and stardust.
+    Chart,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Frame {
-    None,
     Rect,
-    Rounded,
     Arch,
-    Quatrefoil,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Pattern {
-    None,
-    Hatch,
-    Diaper,
-    Dots,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Seeds {
-    /// Into the biggest openings.
-    Gaps,
-    /// From the field's corners, towards the middle.
-    Corners(usize),
-    /// Up from the foot, mirrored.
-    Root,
-}
-
-/// The grimoire's family of initials. Each is a kind of book hand, after the old ones initialis
-/// gathers, varied by each spell's seed.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Recipe {
-    /// A pale letter and vines cut out of a ground of solid ink: a woodcut.
-    Woodcut,
-    /// A gold letter on a patterned coloured ground, with gilt sprigs.
-    Gilt,
-    /// A coloured letter with no frame, and fine penwork in another colour round it.
-    Penwork,
-    /// A letter outlined in ink on the bare page, with scrolls mirrored either side.
-    Engraved,
-}
-
-/// Every setting of an initial that the grimoire's recipes vary.
+/// How a kind of initial is set: its letter, frame and ground, and how it's printed.
 #[derive(Clone, Copy, Debug)]
 struct Style {
     face: Face,
     size: f32,
-    dy: f32,
     letter: Slot,
-    embolden: f32,
-    gap: f32,
-    outline: f32,
-    outline_slot: Slot,
-    inline: f32,
-    inline_off: f32,
-    inline_slot: Slot,
-    echo: usize,
+    /// The ground kept clear round the letter, so the figure passes behind it.
+    halo: f32,
     echo_gap: f32,
     echo_w: f32,
     echo_slot: Slot,
     frame: Frame,
     margin: f32,
-    rules: usize,
     w1: f32,
     rule_gap: f32,
     w2: f32,
     rule_slot: Slot,
     ground: Slot,
-    pattern: Pattern,
-    pat_scale: f32,
-    pat_angle: f32,
-    pat_w: f32,
-    pat_slot: Slot,
-    orn: Opts,
-    halo: Option<f32>,
-    seeds: Seeds,
-    mirror: bool,
-    orn_fill: Slot,
-    orn_stroke: Slot,
-    orn_stroke_w: f32,
-    detail_w: f32,
-    detail_slot: Slot,
     edge: f32,
     edge_scale: f32,
     mottle: f32,
@@ -171,327 +120,276 @@ struct Style {
 }
 
 impl Style {
-    /// The initial of the spell `id`: always the same one.
-    fn of(id: &str) -> Style {
-        let mut r = Rng::new(hash(&["cantrip", id]));
-        let recipe = r.pick(&[
-            Recipe::Woodcut,
-            Recipe::Woodcut,
-            Recipe::Gilt,
-            Recipe::Penwork,
-            Recipe::Engraved,
-        ]);
-        Style::recipe(recipe, &mut r)
-    }
-
-    fn recipe(recipe: Recipe, r: &mut Rng) -> Style {
-        let orn = Opts {
-            margin: 10.0,
-            stem_w: 16.0,
-            taper: 0.4,
-            curl: 0.75,
-            turns: 1.1,
-            undulate: 0.0,
-            wander: 0.25,
-            thin: 0.3,
-            branch: 0.5,
-            max_depth: 2,
-            branch_angle: 0.7,
-            length: 1.0,
-            leaf: Leaf::Acanthus,
-            leaf_size: 0.9,
-            leaf_every: 0.55,
-            leaf_w: 0.6,
-            lobes: 4.0,
-            lobe_depth: 0.42,
-            leaf_curl: 0.5,
-            leaf_angle: 0.8,
-            leaf_outer: true,
-            flower: Flower::Rosette,
-            flower_chance: 0.2,
-            flower_size: 1.0,
-            petals: 6,
-            berries: 0.4,
-            berry_size: 1.4,
-            dots: 0.2,
-            beads: 0.0,
-            terminal: Terminal::Leaf,
-            density: 0.8,
-            sprout: 0.85,
-            mains: 3,
-            fill_leaves: true,
-            detail: Detail::Veins,
-        };
-        let base = Style {
-            face: Face::Roman,
-            size: 0.66,
-            dy: 0.0,
-            letter: Slot::Paper,
-            embolden: 0.0,
-            gap: 16.0,
-            outline: 0.0,
-            outline_slot: Slot::Ink,
-            inline: 0.0,
-            inline_off: 14.0,
-            inline_slot: Slot::Ink,
-            echo: 0,
-            echo_gap: 18.0,
-            echo_w: 7.0,
-            echo_slot: Slot::Rubric,
-            frame: Frame::Rect,
-            margin: 22.0,
-            rules: 1,
-            w1: 16.0,
-            rule_gap: 12.0,
-            w2: 7.0,
-            rule_slot: Slot::Ink,
-            ground: Slot::Ink,
-            pattern: Pattern::None,
-            pat_scale: 34.0,
-            pat_angle: 0.0,
-            pat_w: 6.0,
-            pat_slot: Slot::Paper,
-            orn,
-            halo: None,
-            seeds: Seeds::Gaps,
-            mirror: false,
-            orn_fill: Slot::Paper,
-            orn_stroke: Slot::None,
-            orn_stroke_w: 6.0,
-            detail_w: 5.0,
-            detail_slot: Slot::Ink,
-            edge: 0.25,
-            edge_scale: 7.0,
-            mottle: 0.12,
-            speckle: 0.0,
-        };
-        let leaf = r.pick(&[Leaf::Acanthus, Leaf::Acanthus, Leaf::Trefoil, Leaf::Ivy, Leaf::Ovate]);
-        let flower = r.pick(&[Flower::Rosette, Flower::Quatre, Flower::Bud, Flower::Daisy]);
-        match recipe {
-            Recipe::Woodcut => {
-                let ground = r.pick(&[Slot::Ink, Slot::Rubric, Slot::Rubric, Slot::Azure]);
-                Style {
-                    face: r.pick(&[Face::Roman, Face::Garamond, Face::Uncial, Face::Fraktur]),
-                    size: r.range(0.6, 0.7),
-                    ground,
-                    rule_slot: ground,
-                    rules: r.pick(&[1, 2]),
-                    frame: r.pick(&[Frame::Rect, Frame::Rect, Frame::Rounded]),
-                    inline: if r.chance(0.5) { 6.0 } else { 0.0 },
-                    inline_slot: ground,
-                    seeds: if r.chance(0.4) { Seeds::Corners(2) } else { Seeds::Gaps },
-                    detail_slot: ground,
-                    speckle: r.range(0.0, 0.25),
-                    orn: Opts {
-                        leaf,
-                        flower,
-                        undulate: if r.chance(0.3) { 0.7 } else { 0.0 },
-                        density: r.range(0.7, 0.85),
-                        curl: r.range(0.65, 0.85),
-                        stem_w: r.range(18.0, 24.0),
-                        margin: 12.0,
-                        leaf_size: 1.25,
-                        flower_size: 1.2,
-                        berry_size: 1.8,
-                        dots: 0.1,
-                        terminal: r.pick(&[Terminal::Leaf, Terminal::Flower, Terminal::Curl]),
-                        ..base.orn
-                    },
-                    ..base
-                }
-            }
-            Recipe::Gilt => {
-                let ground = r.pick(&[Slot::Azure, Slot::Azure, Slot::Rubric]);
-                Style {
-                    face: r.pick(&[Face::Fraktur, Face::Fraktur, Face::Roman, Face::Lombardic]),
-                    size: r.range(0.66, 0.74),
-                    letter: Slot::Gilt,
-                    outline: 5.0,
-                    outline_slot: Slot::Ink,
-                    gap: 14.0,
-                    ground,
-                    rules: 2,
-                    w1: 16.0,
-                    w2: 6.0,
-                    rule_slot: Slot::Gilt,
-                    frame: r.pick(&[Frame::Rect, Frame::Rect, Frame::Arch, Frame::Quatrefoil]),
-                    // A fine pattern in ink, dark on the colour, under the gold.
-                    pattern: r.pick(&[Pattern::None, Pattern::Diaper, Pattern::Hatch, Pattern::Dots]),
-                    pat_slot: Slot::Ink,
-                    pat_scale: r.range(36.0, 48.0),
-                    pat_angle: r.pick(&[0.0, FRAC_PI_4]),
-                    pat_w: 4.0,
-                    orn_fill: Slot::Gilt,
-                    detail_slot: ground,
-                    detail_w: 4.0,
-                    orn: Opts {
-                        leaf: r.pick(&[Leaf::Trefoil, Leaf::Ivy, Leaf::Lance]),
-                        flower: r.pick(&[Flower::Quatre, Flower::Rosette, Flower::Bud]),
-                        density: r.range(0.65, 0.8),
-                        stem_w: 17.0,
-                        margin: 12.0,
-                        leaf_size: 1.15,
-                        berries: 0.4,
-                        berry_size: 1.4,
-                        dots: 0.1,
-                        terminal: Terminal::Flower,
-                        detail: Detail::Vein,
-                        ..base.orn
-                    },
-                    edge: 0.12,
-                    ..base
-                }
-            }
-            Recipe::Penwork => {
-                let (letter, pen) = if r.chance(0.5) {
-                    (Slot::Azure, Slot::Rubric)
-                } else {
-                    (Slot::Rubric, Slot::Azure)
-                };
-                Style {
-                    face: r.pick(&[Face::Lombardic, Face::Uncial, Face::Lombardic]),
-                    size: r.range(0.7, 0.76),
-                    letter,
-                    gap: 24.0,
-                    frame: Frame::None,
-                    margin: 8.0,
-                    ground: Slot::Paper,
-                    echo: r.pick(&[1, 2]),
-                    echo_slot: pen,
-                    echo_gap: 18.0,
-                    echo_w: 6.0,
-                    halo: Some(r.range(110.0, 140.0)),
-                    orn_fill: pen,
-                    orn: Opts {
-                        stem_w: 8.0,
-                        taper: 0.2,
-                        margin: 9.0,
-                        curl: 0.95,
-                        turns: 1.8,
-                        branch: 0.35,
-                        max_depth: 2,
-                        length: 0.8,
-                        leaf: Leaf::None,
-                        flower: Flower::None,
-                        beads: 0.55,
-                        berries: 0.6,
-                        berry_size: 0.9,
-                        dots: 0.35,
-                        terminal: Terminal::Ball,
-                        density: r.range(0.45, 0.55),
-                        sprout: 0.9,
-                        mains: 4,
-                        detail: Detail::None,
-                        ..base.orn
-                    },
-                    edge: 0.15,
-                    ..base
-                }
-            }
-            Recipe::Engraved => {
-                let filled = r.chance(0.5);
-                Style {
-                    face: r.pick(&[Face::Roman, Face::Garamond, Face::Roman]),
-                    size: r.range(0.58, 0.64),
-                    letter: if filled { Slot::Rubric } else { Slot::Paper },
-                    outline: 9.0,
-                    outline_slot: Slot::Ink,
-                    inline: if filled { 0.0 } else { 6.0 },
-                    inline_off: 14.0,
-                    gap: 20.0,
-                    ground: Slot::Paper,
-                    rules: 1,
-                    w1: 8.0,
-                    rule_slot: Slot::Ink,
-                    frame: r.pick(&[Frame::Rect, Frame::Arch]),
-                    pattern: if r.chance(0.4) { Pattern::Hatch } else { Pattern::None },
-                    pat_slot: Slot::Ink,
-                    pat_scale: 16.0,
-                    pat_w: 3.0,
-                    seeds: Seeds::Root,
-                    mirror: true,
-                    orn_fill: Slot::Paper,
-                    orn_stroke: Slot::Ink,
-                    orn_stroke_w: 6.0,
-                    detail_slot: Slot::Ink,
-                    detail_w: 4.5,
-                    orn: Opts {
-                        leaf: r.pick(&[Leaf::Acanthus, Leaf::Acanthus, Leaf::Ivy]),
-                        flower: r.pick(&[Flower::Rosette, Flower::Daisy, Flower::Bud]),
-                        stem_w: 17.0,
-                        margin: 15.0,
-                        curl: 0.78,
-                        turns: 1.35,
-                        density: 0.6,
-                        leaf_size: 1.15,
-                        lobes: 3.0,
-                        leaf_curl: 0.7,
-                        flower_chance: 0.35,
-                        petals: 5,
-                        dots: 0.15,
-                        terminal: Terminal::Flower,
-                        mains: 1,
-                        detail: Detail::Vein,
-                        ..base.orn
-                    },
-                    edge: 0.2,
-                    ..base
-                }
-            }
+    fn of(kind: Kind) -> Style {
+        match kind {
+            Kind::Seal => Style {
+                face: Face::Fraktur,
+                size: 0.6,
+                letter: Slot::Gilt,
+                halo: 22.0,
+                echo_gap: 34.0,
+                echo_w: 8.0,
+                echo_slot: Slot::Rubric,
+                frame: Frame::Rect,
+                margin: 18.0,
+                w1: 18.0,
+                rule_gap: 10.0,
+                w2: 7.0,
+                rule_slot: Slot::Gilt,
+                ground: Slot::Ink,
+                edge: 0.22,
+                edge_scale: 7.0,
+                mottle: 0.14,
+                speckle: 0.12,
+            },
+            Kind::Chart => Style {
+                face: Face::Roman,
+                size: 0.52,
+                letter: Slot::Gilt,
+                halo: 22.0,
+                echo_gap: 36.0,
+                echo_w: 6.0,
+                echo_slot: Slot::Paper,
+                frame: Frame::Arch,
+                margin: 18.0,
+                w1: 16.0,
+                rule_gap: 10.0,
+                w2: 7.0,
+                rule_slot: Slot::Gilt,
+                ground: Slot::Azure,
+                edge: 0.18,
+                edge_scale: 7.0,
+                mottle: 0.16,
+                speckle: 0.08,
+            },
         }
     }
 }
 
 /// The frame's outline, in the box `x`, `y`, `w`, `h`.
 fn frame_poly(kind: Frame, x: f32, y: f32, w: f32, h: f32) -> Vec<P> {
-    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-    let mut pts = Vec::new();
-    let arc = |pts: &mut Vec<P>, ax: f32, ay: f32, r: f32, a0: f32, a1: f32, n: usize| {
-        for i in 0..=n {
-            let a = a0 + (a1 - a0) * i as f32 / n as f32;
-            pts.push([ax + a.cos() * r, ay + a.sin() * r]);
-        }
-    };
     match kind {
-        Frame::None | Frame::Rect => vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
-        Frame::Rounded => {
-            let r = w.min(h) * 0.13;
-            arc(&mut pts, x + w - r, y + r, r, -FRAC_PI_2, 0.0, 10);
-            arc(&mut pts, x + w - r, y + h - r, r, 0.0, FRAC_PI_2, 10);
-            arc(&mut pts, x + r, y + h - r, r, FRAC_PI_2, PI, 10);
-            arc(&mut pts, x + r, y + r, r, PI, PI * 1.5, 10);
-            pts
-        }
+        Frame::Rect => vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
         Frame::Arch => {
             let r = w / 2.0;
-            pts.push([x + w, y + h]);
-            pts.push([x, y + h]);
-            arc(&mut pts, cx, y + r, r, PI, 2.0 * PI, 40);
+            let mut pts = vec![[x + w, y + h], [x, y + h]];
+            for i in 0..=40 {
+                let a = PI + PI * i as f32 / 40.0;
+                pts.push([x + r + a.cos() * r, y + r + a.sin() * r]);
+            }
             pts
         }
-        Frame::Quatrefoil => {
-            let (r, d) = (w * 0.27, w / 2.0 - w * 0.27);
-            let m = 200;
-            (0..m)
-                .map(|i| {
-                    let a = i as f32 / m as f32 * 2.0 * PI;
-                    let (dx, dy) = (a.cos(), a.sin());
-                    let mut best: f32 = 0.0;
-                    for k in 0..4 {
-                        let ca = k as f32 * FRAC_PI_2;
-                        let (ox, oy) = (ca.cos() * d, ca.sin() * d);
-                        let b = dx * ox + dy * oy;
-                        let c = ox * ox + oy * oy - r * r;
-                        let disc = b * b - c;
-                        if disc >= 0.0 {
-                            best = best.max(b + disc.sqrt());
-                        }
-                    }
-                    [cx + dx * best, cy + dy * best * h / w]
-                })
-                .collect()
+    }
+}
+
+/// One stroke of the figure, drawn in over its own stretch of the inscribing.
+#[derive(Clone, Debug)]
+struct Mark {
+    shape: Shape,
+    slot: Slot,
+    /// When it starts, and how long it takes, as parts of the whole.
+    at: f32,
+    dur: f32,
+}
+
+#[derive(Clone, Debug)]
+enum Shape {
+    /// A line drawn along its length, as a pen would.
+    Line(Vec<P>, f32),
+    /// A dot that swells into place.
+    Dot(P, f32),
+    /// A shape that's washed in.
+    Fill(Vec<P>),
+    /// A crescent: a disc (x, y, r) less one beside it, offset by (dx, dy) and `k` its size.
+    Crescent([f32; 3], P, f32),
+}
+
+impl Mark {
+    fn line(pts: Vec<P>, w: f32, slot: Slot, at: f32, dur: f32) -> Mark {
+        Mark {
+            shape: Shape::Line(pts, w),
+            slot,
+            at,
+            dur,
         }
     }
+
+    fn dot(p: P, r: f32, slot: Slot, at: f32, dur: f32) -> Mark {
+        Mark {
+            shape: Shape::Dot(p, r),
+            slot,
+            at,
+            dur,
+        }
+    }
+
+    /// How far it's drawn at `t`.
+    fn progress(&self, t: f32) -> f32 {
+        if t >= 1.0 {
+            1.0
+        } else {
+            ((t - self.at) / self.dur.max(1e-3)).clamp(0.0, 1.0)
+        }
+    }
+}
+
+/// The start of `pts`, `u` of its length.
+fn partial(pts: &[P], u: f32) -> Vec<P> {
+    if u >= 1.0 || pts.len() < 2 {
+        return pts.to_vec();
+    }
+    let len = |a: P, b: P| (b[0] - a[0]).hypot(b[1] - a[1]);
+    let total: f32 = pts.windows(2).map(|w| len(w[0], w[1])).sum();
+    let mut left = total * u;
+    let mut out = vec![pts[0]];
+    for w in pts.windows(2) {
+        let d = len(w[0], w[1]);
+        if d >= left {
+            let k = if d > 0.0 { left / d } else { 0.0 };
+            out.push([
+                w[0][0] + (w[1][0] - w[0][0]) * k,
+                w[0][1] + (w[1][1] - w[0][1]) * k,
+            ]);
+            return out;
+        }
+        out.push(w[1]);
+        left -= d;
+    }
+    out
+}
+
+/// An arc about (`cx`, `cy`), radius `r`, from `a0` through `span`.
+fn arc(cx: f32, cy: f32, r: f32, a0: f32, span: f32) -> Vec<P> {
+    let n = ((span.abs() * r / 12.0).ceil() as usize).max(8);
+    (0..=n)
+        .map(|i| {
+            let a = a0 + span * i as f32 / n as f32;
+            [cx + a.cos() * r, cy + a.sin() * r]
+        })
+        .collect()
+}
+
+/// Where the figure may go: inside the field, and clear of the letter.
+struct Room {
+    cell: f32,
+    n: usize,
+    free: Vec<bool>,
+}
+
+impl Room {
+    fn at(&self, x: f32, y: f32) -> bool {
+        let (i, j) = ((x / self.cell).round(), (y / self.cell).round());
+        if i < 0.0 || j < 0.0 || i as usize >= self.n || j as usize >= self.n {
+            return false;
+        }
+        self.free[j as usize * self.n + i as usize]
+    }
+
+    /// A disc of radius `r` about (`x`, `y`) is clear.
+    fn clear(&self, x: f32, y: f32, r: f32) -> bool {
+        self.at(x, y)
+            && (0..8).all(|k| {
+                let a = k as f32 * TAU / 8.0;
+                self.at(x + a.cos() * r, y + a.sin() * r)
+            })
+    }
+
+    /// How far from (`x`, `y`) it stays clear, up to `max`.
+    fn clearance(&self, x: f32, y: f32, max: f32) -> f32 {
+        let mut r = 0.0;
+        while r < max && self.clear(x, y, r + 8.0) {
+            r += 8.0;
+        }
+        r
+    }
+}
+
+/// A rune of no alphabet: a stave with twigs, or a figure without one, in a box 0.6 wide and
+/// 1 tall about the origin, up being -y.
+fn rune(r: &mut Rng) -> Vec<Vec<P>> {
+    let mut out = Vec::new();
+    if r.chance(0.82) {
+        let x = if r.chance(0.2) { -0.18 } else { 0.0 };
+        out.push(vec![[x, -0.5], [x, 0.5]]);
+        if x != 0.0 {
+            // Two staves, tied.
+            out.push(vec![[0.18, -0.5], [0.18, 0.5]]);
+            let y = r.pick(&[-0.2, 0.0, 0.2]);
+            out.push(vec![[-0.18, y - 0.15], [0.18, y + 0.15]]);
+            return out;
+        }
+        for _ in 0..r.pick(&[1, 1, 2]) {
+            let y0 = r.pick(&[-0.5, -0.25, 0.0, 0.15]);
+            let side = r.pick(&[-1.0, 1.0]);
+            let dy = r.pick(&[-0.3, 0.25, 0.3]);
+            if r.chance(0.3) {
+                // A bow.
+                out.push(vec![[0.0, y0], [side * 0.28, y0 + 0.17], [0.0, y0 + 0.34]]);
+            } else {
+                out.push(vec![[0.0, y0], [side * 0.3, y0 + dy]]);
+            }
+        }
+    } else {
+        match r.pick(&[0, 1, 2]) {
+            0 => {
+                out.push(vec![[-0.3, -0.5], [0.3, 0.5]]);
+                out.push(vec![[0.3, -0.5], [-0.3, 0.5]]);
+            }
+            1 => out.push(vec![
+                [0.0, -0.5],
+                [0.3, 0.0],
+                [0.0, 0.5],
+                [-0.3, 0.0],
+                [0.0, -0.5],
+            ]),
+            _ => out.push(vec![[0.3, -0.5], [-0.25, 0.0], [0.3, 0.5]]),
+        }
+    }
+    out
+}
+
+/// A sigil: a path through points of a three-by-three grid ending in a bar across it, and
+/// where it starts (for a ring), in a unit box about the origin.
+fn sigil(r: &mut Rng) -> (Vec<P>, P) {
+    let mut cells: Vec<(i32, i32)> = vec![(r.pick(&[-1, 0, 1]), r.pick(&[-1, 0, 1]))];
+    let steps = r.pick(&[3, 4, 4, 5]);
+    let mut tries = 0;
+    while cells.len() < steps && tries < 60 {
+        tries += 1;
+        let c = (r.pick(&[-1, 0, 1]), r.pick(&[-1, 0, 1]));
+        let last = *cells.last().unwrap();
+        if !cells.contains(&c) && (c.0 - last.0).abs() + (c.1 - last.1).abs() <= 3 {
+            cells.push(c);
+        }
+    }
+    let mut path: Vec<P> = cells
+        .iter()
+        .map(|&(x, y)| [x as f32 * 0.4, y as f32 * 0.4])
+        .collect();
+    let start = path[0];
+    if let [.., a, b] = path[..] {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let l = d[0].hypot(d[1]).max(1e-3);
+        let n = [-d[1] / l * 0.16, d[0] / l * 0.16];
+        path.push([b[0] + n[0], b[1] + n[1]]);
+        path.push([b[0] - n[0], b[1] - n[1]]);
+    }
+    (path, start)
+}
+
+/// A four-pointed star, (`x`, `y`), `r` to its points.
+fn sparkle(x: f32, y: f32, r: f32) -> Vec<P> {
+    (0..16)
+        .map(|i| {
+            let a = i as f32 * TAU / 16.0 - FRAC_PI_2;
+            let k = match i % 4 {
+                0 => 1.0,
+                2 => 0.22,
+                _ => 0.3,
+            };
+            [x + a.cos() * r * k, y + a.sin() * r * k]
+        })
+        .collect()
 }
 
 struct Rule {
@@ -499,30 +397,32 @@ struct Rule {
     w: f32,
 }
 
-/// A built initial: its geometry, ready to paint at any moment of its growing in.
+/// A built initial: its geometry, ready to paint at any moment of its inscribing.
 pub struct Scene {
     style: Style,
     seed: u32,
     letter: Vec<Vec<P>>,
     field: Vec<P>,
     rules: Vec<Rule>,
-    orn: Items,
-    /// When the ornament has all grown, in stem lengths.
-    end: f32,
+    marks: Vec<Mark>,
     grain: Mutex<HashMap<u32, Arc<Grain>>>,
     layers: Mutex<HashMap<u32, Arc<Layers>>>,
 }
 
-/// The parts of an initial that don't grow, at one size.
+/// The parts of an initial that don't change, at one size.
 struct Layers {
+    /// The ground.
     under: Vec<[f32; 4]>,
-    /// Painted over a clear canvas, to lay over the ornament in one go.
+    /// Where the figure may be drawn.
+    field: Mask,
+    /// Painted over a clear canvas, to lay over the figure in one go: the letter, kept clear
+    /// round, and the rules.
     over: Canvas,
 }
 
-/// Rasterizes onto a grid of `n` × `m` cells, `cell` units each, as booleans.
-fn grid_mask(nx: usize, ny: usize, cell: f32, draw: impl FnOnce(&mut Mask, Transform)) -> Vec<bool> {
-    let mut m = Mask::new(nx as u32, ny as u32).expect("a grid");
+/// Rasterizes onto a grid of `n` × `n` cells, `cell` units each, as booleans.
+fn grid_mask(n: usize, cell: f32, draw: impl FnOnce(&mut Mask, Transform)) -> Vec<bool> {
+    let mut m = Mask::new(n as u32, n as u32).expect("a grid");
     let t = Transform::from_row(1.0 / cell, 0.0, 0.0, 1.0 / cell, 0.5, 0.5);
     draw(&mut m, t);
     m.data().iter().map(|&v| v > 127).collect()
@@ -545,14 +445,6 @@ fn path_of(polys: &[Vec<P>], closed: bool) -> Option<Path> {
     pb.finish()
 }
 
-fn dots_path(dots: impl IntoIterator<Item = [f32; 3]>, min_r: f32) -> Option<Path> {
-    let mut pb = PathBuilder::new();
-    for [x, y, r] in dots {
-        pb.push_circle(x, y, r.max(min_r));
-    }
-    pb.finish()
-}
-
 fn stroked(path: &Path, w: f32) -> Option<Path> {
     path.stroke(
         &Stroke {
@@ -565,224 +457,171 @@ fn stroked(path: &Path, w: f32) -> Option<Path> {
     )
 }
 
-/// Lines across `box` at `spacing`, turned to `angle` about its middle.
-fn hatch(b: Box2, spacing: f32, angle: f32) -> Vec<Vec<P>> {
-    let (cx, cy) = ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
-    let r = b.w().hypot(b.h()) / 2.0 + spacing;
-    let (c, s) = (angle.cos(), angle.sin());
-    let mut out = Vec::new();
-    let mut v = -r;
-    while v <= r {
-        let p = |u: f32| [cx + c * u - s * v, cy + s * u + c * v];
-        out.push(vec![p(-r), p(r)]);
-        v += spacing;
-    }
-    out
-}
-
 impl Scene {
-    /// The initial `letter` of the spell `id`.
-    pub fn build(letter: char, id: &str) -> Scene {
-        Scene::of(letter, Style::of(id), hash(&["cantrip", id, "growth"]))
+    /// The initial `letter` of the spell `id`, of `kind`.
+    pub fn build(letter: char, id: &str, kind: Kind) -> Scene {
+        Scene::of(letter, kind, hash(&["cantrip", id, "figure"]))
     }
 
-    fn of(letter: char, style: Style, seed: u32) -> Scene {
-        let st = style;
+    fn of(letter: char, kind: Kind, seed: u32) -> Scene {
+        let st = Style::of(kind);
         let m = st.margin;
         let base = frame_poly(st.frame, m, m, W - 2.0 * m, W - 2.0 * m);
-        let mut rules = Vec::new();
-        let mut inset = 0.0;
-        let n = if st.frame == Frame::None { 0 } else { st.rules };
-        for i in 0..n {
-            let rw = if i == 0 { st.w1 } else { st.w2 };
-            if i > 0 {
-                inset += st.rule_gap;
-            }
-            if rw > 0.0 {
-                rules.push(Rule {
-                    pts: offset_polygon(&base, inset + rw / 2.0),
-                    w: rw,
-                });
-            }
-            inset += rw;
-        }
-        let field = if inset > 0.0 {
-            offset_polygon(&base, inset)
-        } else {
-            base.clone()
-        };
+        let mut rules = vec![Rule {
+            pts: offset_polygon(&base, st.w1 / 2.0),
+            w: st.w1,
+        }];
+        let mut inset = st.w1 + st.rule_gap;
+        rules.push(Rule {
+            pts: offset_polygon(&base, inset + st.w2 / 2.0),
+            w: st.w2,
+        });
+        inset += st.w2;
+        let field = offset_polygon(&base, inset);
         let fb = Box2::of([&field]);
 
         // The letter, centred in the field.
         let face = caps(st.face);
-        let glyph = face
-            .letter(letter)
-            .or_else(|| caps(Face::Roman).letter(letter))
-            .cloned()
-            .unwrap_or_default();
-        let contours = if glyph.is_empty() {
+        let glyph = face.letter(letter).cloned().unwrap_or_default();
+        let contours: Vec<Vec<P>> = if glyph.is_empty() {
             Vec::new()
         } else {
             let b = Box2::of(&glyph);
             let s = (st.size * fb.h() / face.cap_height.max(b.h() * 0.6))
                 .min(st.size * 1.15 * fb.w() / b.w())
                 .min(1.6 * fb.h() / b.h());
-            let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0 + st.dy * fb.h());
+            let (cx, cy) = (
+                (fb.x0 + fb.x1) / 2.0,
+                (fb.y0 + fb.y1) / 2.0
+                    + if st.frame == Frame::Arch {
+                        0.06 * fb.h()
+                    } else {
+                        0.0
+                    },
+            );
             let (bx, by) = ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
             glyph
                 .iter()
-                .map(|c| c.iter().map(|p| [cx + (p[0] - bx) * s, cy + (p[1] - by) * s]).collect())
+                .map(|c| {
+                    c.iter()
+                        .map(|p| [cx + (p[0] - bx) * s, cy + (p[1] - by) * s])
+                        .collect()
+                })
                 .collect()
         };
 
-        // Where the ornament may grow: inside the frame, kept off the letter.
-        let o = st.orn;
-        let cell = 5.0;
-        let mut f = Field::new(W, W, cell, sizes(&o).cap);
-        let (nx, ny) = f.dims();
-        let letter_path = path_of(&contours, true);
-        let inside = grid_mask(nx, ny, cell, |mk, t| {
+        // Where the figure has room: in the field, clear of the letter and its echo.
+        let cell = 10.0;
+        let n = (W / cell) as usize + 1;
+        let inside = grid_mask(n, cell, |mk, t| {
             if let Some(p) = path_of(std::slice::from_ref(&field), true) {
                 mk.fill_path(&p, FillRule::Winding, true, t);
             }
         });
-        let keep_out = grid_mask(nx, ny, cell, |mk, t| {
-            if let Some(p) = &letter_path {
-                mk.fill_path(p, FillRule::Winding, true, t);
-                if let Some(s) = stroked(p, 2.0 * (st.gap + st.embolden.max(0.0))) {
+        let near = grid_mask(n, cell, |mk, t| {
+            if let Some(p) = path_of(&contours, true) {
+                mk.fill_path(&p, FillRule::Winding, true, t);
+                if let Some(s) = stroked(&p, 2.0 * (st.echo_gap + st.echo_w + 10.0)) {
                     mk.fill_path(&s, FillRule::Winding, true, t);
                 }
             }
         });
-        let mut allowed: Vec<bool> = inside.iter().zip(&keep_out).map(|(a, k)| *a && !k).collect();
-        if let (Some(halo), Some(p)) = (st.halo, &letter_path) {
-            let near = grid_mask(nx, ny, cell, |mk, t| {
-                mk.fill_path(p, FillRule::Winding, true, t);
-                if let Some(s) = stroked(p, 2.0 * halo) {
-                    mk.fill_path(&s, FillRule::Winding, true, t);
-                }
-            });
-            for (a, n) in allowed.iter_mut().zip(&near) {
-                *a = *a && *n;
-            }
-        }
-        if st.mirror {
-            // A wall down the middle; the other half is this one's reflection.
-            let wall = W / 2.0 + o.margin / 2.0;
-            let full = allowed.clone();
-            for j in 0..ny {
-                for i in 0..nx {
-                    let k = j * nx + i;
-                    let mi = ((W - i as f32 * cell) / cell).round() as isize;
-                    if i as f32 * cell >= wall || mi < 0 || mi as usize >= nx || !full[j * nx + mi as usize] {
-                        allowed[k] = false;
-                    }
-                }
-            }
-        }
-        let blocked: Vec<bool> = allowed.iter().map(|a| !a).collect();
-        f.set_blocked(&blocked);
-
-        let inset = o.margin + o.stem_w + 4.0;
-        let (x0, x1, y0, y1) = (fb.x0 + inset, fb.x1 - inset, fb.y0 + inset, fb.y1 - inset);
-        let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0);
-        let mut r = Rng::new(seed ^ 0x51ed);
-        let towards = |x: f32, y: f32| (cy - y).atan2(cx - x);
-        let seeds: Vec<Seed> = match st.seeds {
-            Seeds::Gaps => Vec::new(),
-            Seeds::Corners(n) => [[x0, y1], [x1, y1], [x0, y0], [x1, y0]]
-                .iter()
-                .take(n.max(1))
-                .map(|&[x, y]| Seed {
-                    x,
-                    y,
-                    dir: towards(x, y) + (r.next() - 0.5) * 0.6,
-                    grace: None,
-                })
-                .collect(),
-            Seeds::Root => vec![Seed {
-                x: W / 2.0 - o.margin - o.stem_w,
-                y: y1,
-                dir: -FRAC_PI_2 - 0.25,
-                grace: Some(0.0),
-            }],
+        let room = Room {
+            cell,
+            n,
+            free: inside.iter().zip(&near).map(|(a, b)| *a && !b).collect(),
         };
-        let noise = Noise::new(seed ^ 0x5bd1_e995);
-        let seeds: Vec<Seed> = seeds
-            .into_iter()
-            .filter(|s| f.at(s.x, s.y) > o.margin * 0.5)
-            .collect();
-        let mut orn = grow(&mut f, o, seed, &noise, &seeds);
-        if st.mirror {
-            orn = orn.mirrored(W);
-        }
-        let end = orn.end();
+
+        let mut r = Rng::new(seed);
+        let marks = match kind {
+            Kind::Seal => seal(fb, &room, &mut r),
+            Kind::Chart => chart(fb, &room, &mut r),
+        };
         Scene {
             style: st,
             seed,
             letter: contours,
             field,
             rules,
-            orn,
-            end,
+            marks,
             grain: Mutex::new(HashMap::new()),
             layers: Mutex::new(HashMap::new()),
         }
     }
 
-    /// The initial `t` of the way through growing in (0: the letter in its frame alone; 1: all
-    /// of it), `px` pixels square, in `inks`: straight-alpha sRGB, rows top first.
+    /// The initial `t` of the way through its inscribing (0: the letter in its frame alone; 1:
+    /// all of it), `px` pixels square, in `inks`: straight-alpha sRGB, rows top first.
     pub fn paint(&self, t: f32, px: u32, inks: &Inks) -> Vec<u8> {
         // Painted at twice the size and printed down, so the inks' edges are smooth.
         let n = px * 2;
         let layers = self.layers(n);
         let mut c = Canvas::new(n);
         c.cov.clone_from(&layers.under);
-        let st = &self.style;
         let tf = Transform::from_scale(n as f32 / W, n as f32 / W);
         let min_line = 1.1 * W / n as f32;
 
-        // The ornament as it stands.
-        let items = self.orn.at(t.clamp(0.0, 1.0) * self.end);
-        let mut polys: Vec<Vec<P>> = items.stems.iter().map(|s| s.outline(min_line)).collect();
-        for s in items.leaves.iter().chain(&items.flowers) {
-            polys.extend(s.polys.iter().cloned());
-        }
-        let dots: Vec<[f32; 3]> = items
-            .dots
-            .iter()
-            .chain(&items.beads)
-            .map(|d| [d[0], d[1], d[2]])
-            .collect();
-        let mut m = c.fill(path_of(&polys, true), tf);
-        union(&mut m, &c.fill(dots_path(dots.iter().copied(), min_line / 2.0), tf));
-        if st.orn_stroke != Slot::None {
-            // Outlined: the shapes grown by the line's width, under them. (Stroking every
-            // outline, every frame, would cost several times as much.)
-            let out = dilate(&m, st.orn_stroke_w * n as f32 / W);
-            c.put(&out, st.orn_stroke);
-        }
-        c.put(&m, st.orn_fill);
-        if st.orn.detail != Detail::None {
-            let mut lines: Vec<Vec<P>> = items.stems.iter().filter_map(|s| s.vein()).collect();
-            for s in items.leaves.iter().chain(&items.flowers) {
-                lines.extend(s.lines.iter().filter(|l| l.len() > 1).cloned());
+        // The figure as far as it's drawn, a run of marks of one ink at a time.
+        let mut i = 0;
+        while i < self.marks.len() {
+            let slot = self.marks[i].slot;
+            let mut m = c.blank();
+            let mut any = false;
+            while i < self.marks.len() && self.marks[i].slot == slot {
+                let mark = &self.marks[i];
+                i += 1;
+                let u = mark.progress(t);
+                if u <= 0.0 {
+                    continue;
+                }
+                any = true;
+                match &mark.shape {
+                    Shape::Line(pts, w) => {
+                        if let Some(p) = path_of(&[partial(pts, u)], false)
+                            .and_then(|p| stroked(&p, w.max(min_line)))
+                        {
+                            m.fill_path(&p, FillRule::Winding, true, tf);
+                        }
+                    }
+                    Shape::Dot([x, y], rad) => {
+                        // Swells a little past its size, and settles.
+                        let s = 1.0 - (1.0 - u).powi(3) + 0.25 * (u * PI).sin();
+                        let mut pb = PathBuilder::new();
+                        pb.push_circle(*x, *y, (rad * s).max(min_line / 2.0));
+                        if let Some(p) = pb.finish() {
+                            m.fill_path(&p, FillRule::Winding, true, tf);
+                        }
+                    }
+                    Shape::Fill(poly) => {
+                        let mut f = c.fill(path_of(std::slice::from_ref(poly), true), tf);
+                        fade(&mut f, u);
+                        union(&mut m, &f);
+                    }
+                    Shape::Crescent([x, y, rad], [dx, dy], k) => {
+                        let disc = |x: f32, y: f32, r: f32| {
+                            let mut pb = PathBuilder::new();
+                            pb.push_circle(x, y, r);
+                            c.fill(pb.finish(), tf)
+                        };
+                        let mut f = disc(*x, *y, *rad);
+                        subtract(&mut f, &disc(x + dx, y + dy, rad * k));
+                        fade(&mut f, u);
+                        union(&mut m, &f);
+                    }
+                }
             }
-            let mut m = c.stroke(path_of(&lines, false), st.detail_w.max(min_line), tf);
-            union(
-                &mut m,
-                &c.fill(dots_path(items.flowers.iter().flat_map(|f| f.dots.iter().copied()), min_line / 2.0), tf),
-            );
-            c.put(&m, st.detail_slot);
+            if any {
+                intersect(&mut m, &layers.field);
+                c.put(&m, slot);
+            }
         }
 
         c.apply(&layers.over);
         let grain = self.grain(n);
-        c.print(st, &grain, inks, px)
+        c.print(&self.style, &grain, inks, px)
     }
 
-    /// What doesn't grow, painted once at each size: the ground and its pattern under the
-    /// ornament, and the letter and the rules over it.
+    /// What doesn't change, painted once at each size: the ground under the figure, and the
+    /// letter and the rules over it.
     fn layers(&self, n: u32) -> Arc<Layers> {
         if let Some(l) = self.layers.lock().unwrap().get(&n) {
             return l.clone();
@@ -792,65 +631,40 @@ impl Scene {
         let tf = Transform::from_scale(n as f32 / W, n as f32 / W);
         let min_line = 1.1 * W / n as f32;
 
-        // The field and its ground.
-        let field_mask = c.fill(path_of(std::slice::from_ref(&self.field), true), tf);
-        if st.frame != Frame::None {
-            c.put(&field_mask, st.ground);
-            if st.pattern != Pattern::None {
-                let b = Box2::of([&self.field]);
-                let mut p = match st.pattern {
-                    Pattern::Hatch => c.stroke(path_of(&hatch(b, st.pat_scale, st.pat_angle), false), st.pat_w, tf),
-                    Pattern::Diaper => {
-                        let lines: Vec<_> = hatch(b, st.pat_scale, st.pat_angle + FRAC_PI_4)
-                            .into_iter()
-                            .chain(hatch(b, st.pat_scale, st.pat_angle - FRAC_PI_4))
-                            .collect();
-                        let mut m = c.stroke(path_of(&lines, false), st.pat_w, tf);
-                        let d = st.pat_scale / std::f32::consts::SQRT_2 * 2.0;
-                        let dots = lattice(b, d, st.pat_angle, false).map(|[x, y]| [x, y + d / 2.0, st.pat_w * 1.4]);
-                        union(&mut m, &c.fill(dots_path(dots, 0.0), tf));
-                        m
-                    }
-                    Pattern::Dots => {
-                        let dots = lattice(b, st.pat_scale, st.pat_angle, true).map(|[x, y]| [x, y, st.pat_w * 0.9]);
-                        c.fill(dots_path(dots, 0.0), tf)
-                    }
-                    Pattern::None => unreachable!(),
-                };
-                intersect(&mut p, &field_mask);
-                c.put(&p, st.pat_slot);
-            }
-        }
-
+        let field = c.fill(path_of(std::slice::from_ref(&self.field), true), tf);
+        c.put(&field, st.ground);
         let under = std::mem::take(&mut c.cov);
-        let mut c = Canvas::new(n);
-        // The letter.
-        if let Some(lp) = path_of(&self.letter, true) {
-            let e = st.embolden;
-            for i in 1..=st.echo {
-                let d = e + st.echo_gap * i as f32;
-                let band = c.band(&lp, -d - st.echo_w / 2.0, -d + st.echo_w / 2.0, tf);
-                c.put(&band, st.echo_slot);
-            }
-            let body = c.region(&lp, -e, tf);
-            c.put(&body, st.letter);
-            if st.inline > 0.0 {
-                let band = c.band(&lp, -e + st.inline_off, -e + st.inline_off + st.inline, tf);
-                c.put(&band, st.inline_slot);
-            }
-            if st.outline > 0.0 {
-                let band = c.band(&lp, -e - st.outline / 2.0, -e + st.outline / 2.0, tf);
-                c.put(&band, st.outline_slot);
-            }
-        }
 
-        // Rules on top.
+        let mut c = Canvas::new(n);
+        if let Some(lp) = path_of(&self.letter, true) {
+            // The ground kept clear round it, so the figure passes behind.
+            let mut clear = c.region(&lp, -st.halo, tf);
+            intersect(&mut clear, &field);
+            c.put(&clear, st.ground);
+            let band = c.band(
+                &lp,
+                -st.echo_gap - st.echo_w / 2.0,
+                -st.echo_gap + st.echo_w / 2.0,
+                tf,
+            );
+            c.put(&band, st.echo_slot);
+            let body = c.region(&lp, 0.0, tf);
+            c.put(&body, st.letter);
+        }
         for rule in &self.rules {
-            let m = c.stroke(path_of(std::slice::from_ref(&rule.pts), true), rule.w.max(min_line), tf);
+            let m = c.stroke(
+                path_of(std::slice::from_ref(&rule.pts), true),
+                rule.w.max(min_line),
+                tf,
+            );
             c.put(&m, st.rule_slot);
         }
 
-        let layers = Arc::new(Layers { under, over: c });
+        let layers = Arc::new(Layers {
+            under,
+            field,
+            over: c,
+        });
         self.layers.lock().unwrap().insert(n, layers.clone());
         layers
     }
@@ -864,51 +678,334 @@ impl Scene {
     }
 }
 
-/// Points of a (staggered) grid over `b`, `d` apart, turned to `angle`.
-fn lattice(b: Box2, d: f32, angle: f32, stagger: bool) -> impl Iterator<Item = P> {
-    let (cx, cy) = ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
-    let r = b.w().hypot(b.h()) / 2.0 + d;
-    let (c, s) = (angle.cos(), angle.sin());
-    let rows = (2.0 * r / (d * if stagger { 0.87 } else { 1.0 })) as i32 + 1;
-    let cols = (2.0 * r / d) as i32 + 1;
-    (0..rows).flat_map(move |j| {
-        let v = -r + j as f32 * d * if stagger { 0.87 } else { 1.0 };
-        let off = if stagger && j % 2 == 1 { d / 2.0 } else { 0.0 };
-        (0..cols).map(move |i| {
-            let u = -r + off + i as f32 * d;
-            [cx + c * u - s * v, cy + s * u + c * v]
-        })
-    })
+/// Scales a mask's coverage by `u`.
+fn fade(m: &mut Mask, u: f32) {
+    if u < 1.0 {
+        for v in m.data_mut() {
+            *v = (*v as f32 * u) as u8;
+        }
+    }
 }
 
-/// `m` grown by `r` pixels (a square reach, softened at its edge).
-fn dilate(m: &Mask, r: f32) -> Mask {
-    let n = m.width() as usize;
-    let reach = r.ceil() as usize;
-    let frac = r - (reach as f32 - 1.0);
-    let pass = |src: &[u8], step: usize, stride: usize| -> Vec<u8> {
-        let mut out = vec![0u8; src.len()];
-        for line in 0..n {
-            for i in 0..n {
-                let at = |j: usize| src[line * stride + j * step];
-                let mut v = at(i) as f32;
-                for d in 1..=reach {
-                    let w = if d == reach { frac } else { 1.0 };
-                    if i >= d {
-                        v = v.max(at(i - d) as f32 * w);
-                    }
-                    if i + d < n {
-                        v = v.max(at(i + d) as f32 * w);
-                    }
-                }
-                out[line * stride + i * step] = v as u8;
+/// The seal's figure: a double ring round the field with runes between, a star drawn through
+/// it in vermilion, gold at the star's points, and a sigil in each corner. Each spell's has its
+/// own star, runes, ticks and sigils.
+fn seal(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
+    let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0);
+    let big = fb.w().min(fb.h()) / 2.0;
+    let r_out = big * 0.95;
+    let band = big * r.range(0.17, 0.2);
+    let r_in = r_out - band;
+    let turn = r.range(0.0, TAU);
+    let mut marks = Vec::new();
+
+    // The rings, traced from the top round.
+    let start = -FRAC_PI_2 + r.range(-0.4, 0.4);
+    marks.push(Mark::line(
+        arc(cx, cy, r_out, start, TAU),
+        13.0,
+        Slot::Gilt,
+        0.0,
+        0.3,
+    ));
+    marks.push(Mark::line(
+        arc(cx, cy, r_in, start, -TAU),
+        11.0,
+        Slot::Gilt,
+        0.06,
+        0.3,
+    ));
+
+    // The star, {n/k}, each of its loops drawn in one stroke.
+    let (points, step) = r.pick(&[(5, 2), (6, 2), (7, 2), (7, 3), (8, 3), (9, 2), (9, 4)]);
+    let r_star = r_in - 8.0;
+    let a0 = -FRAC_PI_2
+        + if r.chance(0.5) {
+            0.0
+        } else {
+            PI / points as f32
+        };
+    let vertex = |i: usize| {
+        let a = a0 + TAU * i as f32 / points as f32;
+        [cx + a.cos() * r_star, cy + a.sin() * r_star]
+    };
+    let loops = gcd(points, step);
+    for l in 0..loops {
+        let pts: Vec<P> = (0..=points / loops).map(|j| vertex(l + j * step)).collect();
+        let at = 0.22 + 0.35 * l as f32 / loops as f32;
+        marks.push(Mark::line(pts, 13.0, Slot::Rubric, at, 0.4 / loops as f32));
+    }
+    // And sometimes the circle its inner points touch.
+    if r.chance(0.5) {
+        let ri = r_star * (PI * step as f32 / points as f32).cos();
+        marks.push(Mark::line(
+            arc(cx, cy, ri, turn, TAU),
+            7.0,
+            Slot::Rubric,
+            0.5,
+            0.25,
+        ));
+    }
+    // Ticks inside the inner ring, between the star's points.
+    if r.chance(0.6) {
+        let per = r.pick(&[2, 3, 4]);
+        let count = points * per;
+        for i in 0..count {
+            if i % per == 0 {
+                continue;
+            }
+            let a = a0 + TAU * i as f32 / count as f32;
+            let (c, s) = (a.cos(), a.sin());
+            let pts = vec![
+                [cx + c * (r_in - 4.0), cy + s * (r_in - 4.0)],
+                [cx + c * (r_in - 30.0), cy + s * (r_in - 30.0)],
+            ];
+            let at = 0.45 + 0.2 * i as f32 / count as f32;
+            marks.push(Mark::line(pts, 8.0, Slot::Gilt, at, 0.06));
+        }
+    }
+    // Gold at the star's points.
+    for i in 0..points {
+        let at = 0.55 + 0.12 * i as f32 / points as f32;
+        marks.push(Mark::dot(vertex(i), 15.0, Slot::Gilt, at, 0.12));
+    }
+
+    // The runes between the rings, upright, read clockwise from the top.
+    let mid = (r_out + r_in) / 2.0;
+    let h = band * 0.6;
+    let count = ((TAU * mid) / (h * 1.0)).floor() as usize;
+    let mut runes = Vec::new();
+    for i in 0..count {
+        let a = start + TAU * (i as f32 + 0.5) / count as f32;
+        let (o, tg) = ([a.cos(), a.sin()], [-a.sin(), a.cos()]);
+        let at = 0.32 + 0.55 * i as f32 / count as f32;
+        let p = [cx + o[0] * mid, cy + o[1] * mid];
+        if r.chance(0.14) {
+            // A stop between words.
+            marks.push(Mark::dot(p, 9.0, Slot::Gilt, at, 0.08));
+            continue;
+        }
+        for stroke in rune(r) {
+            let pts = stroke
+                .iter()
+                .map(|q| {
+                    [
+                        p[0] + (q[0] * tg[0] - q[1] * o[0]) * h,
+                        p[1] + (q[0] * tg[1] - q[1] * o[1]) * h,
+                    ]
+                })
+                .collect();
+            runes.push(Mark::line(pts, 9.0, Slot::Gilt, at, 0.08));
+        }
+    }
+    marks.extend(runes);
+
+    // A sigil in each corner, where it has room.
+    let corner = big * 0.85;
+    let size = big * 0.2;
+    for (k, (sx, sy)) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let (x, y) = (cx + sx * corner, cy + sy * corner);
+        if !room.at(x, y) {
+            continue;
+        }
+        let (path, ring) = sigil(r);
+        let place = |q: &P| [x + q[0] * size, y + q[1] * size];
+        let at = 0.7 + 0.06 * k as f32;
+        marks.push(Mark::line(
+            circle_poly(ring[0] * size + x, ring[1] * size + y, size * 0.13),
+            8.0,
+            Slot::Gilt,
+            at,
+            0.06,
+        ));
+        marks.push(Mark::line(
+            path.iter().map(place).collect(),
+            9.0,
+            Slot::Gilt,
+            at + 0.05,
+            0.16,
+        ));
+    }
+    marks
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// The chart's figure: orbits swung round the letter with a planet on each, two or three
+/// constellations, a crescent moon where there's room, and stardust. Each spell's sky is its
+/// own.
+fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
+    let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0 + 0.06 * fb.h());
+    let big = fb.w().min(fb.h()) / 2.0;
+    let mut marks = Vec::new();
+    let mut taken: Vec<[f32; 3]> = Vec::new();
+    let near = |taken: &[[f32; 3]], x: f32, y: f32, d: f32| {
+        taken.iter().any(|t| (t[0] - x).hypot(t[1] - y) < t[2] + d)
+    };
+
+    // Orbits: tilted ellipses, part drawn, a planet where each ends.
+    for k in 0..r.pick(&[1, 2, 2]) {
+        let rx = big * r.range(0.8, 0.98);
+        let ry = rx * r.range(0.3, 0.48);
+        let tilt = r.range(-0.7, 0.7) + k as f32 * 0.9;
+        let a0 = r.range(0.0, TAU);
+        let span = TAU * r.range(0.6, 0.82) * if r.chance(0.5) { 1.0 } else { -1.0 };
+        let n = 120;
+        let (c, s) = (tilt.cos(), tilt.sin());
+        let pts: Vec<P> = (0..=n)
+            .map(|i| {
+                let a = a0 + span * i as f32 / n as f32;
+                let (ex, ey) = (a.cos() * rx, a.sin() * ry);
+                [cx + ex * c - ey * s, cy + ex * s + ey * c]
+            })
+            .collect();
+        let end = *pts.last().unwrap();
+        let at = 0.04 * k as f32;
+        marks.push(Mark::line(pts, 8.0, Slot::Gilt, at, 0.5));
+        if room.clear(end[0], end[1], 22.0) {
+            marks.push(Mark::dot(end, 17.0, Slot::Gilt, at + 0.48, 0.12));
+            marks.push(Mark::line(
+                circle_poly(end[0], end[1], 32.0),
+                6.0,
+                Slot::Gilt,
+                at + 0.55,
+                0.12,
+            ));
+            taken.push([end[0], end[1], 40.0]);
+        }
+    }
+
+    // A crescent moon, where there's most room.
+    let mut best = (0.0, [0.0, 0.0]);
+    for _ in 0..60 {
+        let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
+        let c = room.clearance(x, y, 90.0);
+        if c > best.0 && !near(&taken, x, y, c) {
+            best = (c, [x, y]);
+        }
+    }
+    if best.0 >= 40.0 {
+        let rad = (best.0 - 8.0).min(70.0);
+        let a = r.range(0.0, TAU);
+        let [x, y] = best.1;
+        marks.push(Mark {
+            shape: Shape::Crescent(
+                [x, y, rad],
+                [a.cos() * rad * 0.42, a.sin() * rad * 0.42],
+                0.9,
+            ),
+            slot: Slot::Gilt,
+            at: 0.35,
+            dur: 0.35,
+        });
+        taken.push([x, y, rad + 16.0]);
+    }
+
+    // Constellations: a few bright stars, joined.
+    let mut lines = Vec::new();
+    let mut stars = Vec::new();
+    for k in 0..r.pick(&[2, 3, 3]) {
+        let mut chain: Vec<P> = Vec::new();
+        for _ in 0..40 {
+            let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
+            if room.clear(x, y, 20.0) && !near(&taken, x, y, 20.0) {
+                chain.push([x, y]);
+                break;
             }
         }
-        out
-    };
-    let h = pass(m.data(), 1, n);
-    let v = pass(&h, n, 1);
-    Mask::from_vec(v, tiny_skia::IntSize::from_wh(n as u32, n as u32).unwrap()).unwrap()
+        let Some(&first) = chain.first() else {
+            continue;
+        };
+        let mut dir = r.range(0.0, TAU);
+        let mut last = first;
+        for _ in 0..r.pick(&[3, 4, 5]) {
+            let mut placed = false;
+            for _ in 0..24 {
+                let d = dir + r.range(-1.1, 1.1);
+                let l = r.range(90.0, 160.0);
+                let p = [last[0] + d.cos() * l, last[1] + d.sin() * l];
+                let midway = [(p[0] + last[0]) / 2.0, (p[1] + last[1]) / 2.0];
+                if room.clear(p[0], p[1], 20.0)
+                    && room.at(midway[0], midway[1])
+                    && !near(&taken, p[0], p[1], 20.0)
+                    && chain
+                        .iter()
+                        .all(|q| (q[0] - p[0]).hypot(q[1] - p[1]) > 70.0)
+                {
+                    chain.push(p);
+                    last = p;
+                    dir = d;
+                    placed = true;
+                    break;
+                }
+            }
+            if !placed {
+                break;
+            }
+        }
+        if chain.len() < 3 {
+            continue;
+        }
+        let begin = 0.15 + 0.22 * k as f32;
+        let each = 0.4 / chain.len() as f32;
+        for (j, &p) in chain.iter().enumerate() {
+            let at = begin + each * j as f32;
+            if j == 0 || r.chance(0.25) {
+                stars.push(Mark {
+                    shape: Shape::Fill(sparkle(p[0], p[1], r.range(30.0, 40.0))),
+                    slot: Slot::Paper,
+                    at,
+                    dur: 0.12,
+                });
+            } else {
+                stars.push(Mark::dot(p, r.range(10.0, 15.0), Slot::Paper, at, 0.1));
+            }
+            if j > 0 {
+                lines.push(Mark::line(
+                    vec![chain[j - 1], p],
+                    6.0,
+                    Slot::Gilt,
+                    at - each,
+                    each,
+                ));
+            }
+            taken.push([p[0], p[1], 26.0]);
+        }
+    }
+    marks.extend(lines);
+    marks.extend(stars);
+
+    // Stardust in what's left of the sky.
+    let mut dust = Vec::new();
+    for _ in 0..500 {
+        if dust.len() >= 70 {
+            break;
+        }
+        let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
+        let rad = if r.chance(0.15) {
+            r.range(8.0, 11.0)
+        } else {
+            r.range(4.5, 7.0)
+        };
+        if room.clear(x, y, rad + 6.0) && !near(&taken, x, y, 30.0) {
+            taken.push([x, y, 0.0]);
+            let slot = if r.chance(0.6) {
+                Slot::Paper
+            } else {
+                Slot::Gilt
+            };
+            dust.push((slot, Mark::dot([x, y], rad, slot, r.range(0.0, 0.85), 0.15)));
+        }
+    }
+    // One run per ink.
+    dust.sort_by_key(|d| d.0 == Slot::Gilt);
+    marks.extend(dust.into_iter().map(|d| d.1));
+    marks
 }
 
 fn union(a: &mut Mask, b: &Mask) {
@@ -982,9 +1079,6 @@ impl Canvas {
 
     /// Paints `mask` in `slot`, over whatever is there.
     fn put(&mut self, mask: &Mask, slot: Slot) {
-        if slot == Slot::None {
-            return;
-        }
         let ch = slot.channel();
         for ((c, al), &m) in self.cov.iter_mut().zip(&mut self.alpha).zip(mask.data()) {
             if m == 0 {
@@ -1174,16 +1268,19 @@ impl Grain {
     }
 }
 
-/// Initials built so far, by spell id and letter.
-type Built = HashMap<(String, char), Arc<Scene>>;
+/// Initials built so far, by spell id, letter and kind.
+type Built = HashMap<(String, char, Kind), Arc<Scene>>;
+
+/// A painted initial: spell id, letter, kind, size and inks.
+type Painted = (String, char, Kind, u32, u64);
 
 /// The book's initials, built and painted as they're wanted, and kept. They're built ahead on
 /// a thread of their own (`prepare`), so leafing to one rarely waits for it.
 #[derive(Default)]
 pub struct Illuminations {
     built: Arc<Mutex<Built>>,
-    asked: std::collections::HashSet<(String, char, u32)>,
-    painted: HashMap<(String, char, u32, u64), (rune::Pixels, f32)>,
+    asked: std::collections::HashSet<(String, char, Kind, u32)>,
+    painted: HashMap<Painted, (rune::Pixels, f32)>,
 }
 
 impl std::fmt::Debug for Illuminations {
@@ -1192,57 +1289,62 @@ impl std::fmt::Debug for Illuminations {
     }
 }
 
+fn scene(built: &Mutex<Built>, id: &str, letter: char, kind: Kind) -> Arc<Scene> {
+    let key = (id.to_string(), letter, kind);
+    if let Some(s) = built.lock().unwrap().get(&key) {
+        return s.clone();
+    }
+    let s = Arc::new(Scene::build(letter, id, kind));
+    built.lock().unwrap().insert(key, s.clone());
+    s
+}
+
 impl Illuminations {
-    /// Builds the initials of these spells (id and letter), in order, `px` square, ahead of
-    /// their being shown. Each is asked for once.
-    pub fn prepare(&mut self, wants: impl IntoIterator<Item = (String, char)>, px: u32) {
+    /// Builds the initials of these spells (id and letter) of `kind`, in order, `px` square,
+    /// ahead of their being shown. Each is asked for once.
+    pub fn prepare(
+        &mut self,
+        wants: impl IntoIterator<Item = (String, char)>,
+        kind: Kind,
+        px: u32,
+    ) {
         let new: Vec<(String, char)> = wants
             .into_iter()
-            .filter(|(id, c)| self.asked.insert((id.clone(), *c, px)))
+            .filter(|(id, c)| self.asked.insert((id.clone(), *c, kind, px)))
             .collect();
         if new.is_empty() {
             return;
         }
         let built = self.built.clone();
         std::thread::spawn(move || {
-            for key in new {
-                let have = built.lock().unwrap().get(&key).cloned();
-                let scene = have.unwrap_or_else(|| {
-                    let s = Arc::new(Scene::build(key.1, &key.0));
-                    built.lock().unwrap().insert(key, s.clone());
-                    s
-                });
-                scene.layers(px * 2);
-                scene.grain(px * 2);
+            for (id, letter) in new {
+                let s = scene(&built, &id, letter, kind);
+                s.layers(px * 2);
+                s.grain(px * 2);
             }
         });
     }
 
-    /// The initial `letter` of the spell `id`, `t` of the way grown in, `px` square: the
-    /// same `Pixels` every time, repainted only when `t` has moved.
-    pub fn pixels(&mut self, id: &str, letter: char, t: f32, px: u32, inks: &Inks) -> rune::Pixels {
+    /// The initial `letter` of the spell `id`, of `kind`, `t` of the way inscribed, `px`
+    /// square: the same `Pixels` every time, repainted only when `t` has moved.
+    pub fn pixels(
+        &mut self,
+        id: &str,
+        letter: char,
+        kind: Kind,
+        t: f32,
+        px: u32,
+        inks: &Inks,
+    ) -> rune::Pixels {
         let t = t.clamp(0.0, 1.0);
-        let key = (id.to_string(), letter, px, inks.key());
+        let key = (id.to_string(), letter, kind, px, inks.key());
         let (pixels, at) = self
             .painted
             .entry(key)
             .or_insert_with(|| (rune::Pixels::new(), f32::NAN));
         if *at != t {
-            let have = self
-                .built
-                .lock()
-                .unwrap()
-                .get(&(id.to_string(), letter))
-                .cloned();
-            let scene = have.unwrap_or_else(|| {
-                let s = Arc::new(Scene::build(letter, id));
-                self.built
-                    .lock()
-                    .unwrap()
-                    .insert((id.to_string(), letter), s.clone());
-                s
-            });
-            pixels.set(px, px, scene.paint(t, px, inks));
+            let s = scene(&self.built, id, letter, kind);
+            pixels.set(px, px, s.paint(t, px, inks));
             *at = t;
         }
         pixels.clone()
@@ -1253,68 +1355,124 @@ impl Illuminations {
 mod tests {
     use super::*;
 
-    const INKS: Inks = Inks {
-        ink: [0.2, 0.12, 0.07],
+    const SIGIL: Inks = Inks {
+        ink: [0.20, 0.12, 0.07],
         rubric: [0.58, 0.14, 0.09],
-        gilt: [0.8, 0.62, 0.28],
-        azure: [0.17, 0.27, 0.52],
+        gilt: [0.80, 0.62, 0.28],
+        azure: [0.16, 0.26, 0.52],
     };
+    const ARCANE: Inks = Inks {
+        ink: [0.16, 0.09, 0.24],
+        rubric: [0.45, 0.14, 0.52],
+        gilt: [0.80, 0.62, 0.28],
+        azure: [0.14, 0.24, 0.48],
+    };
+    const KINDS: [(Kind, Inks); 2] = [(Kind::Seal, SIGIL), (Kind::Chart, ARCANE)];
 
     #[test]
     fn every_face_has_every_capital() {
         for face in caps::FACES {
             for c in 'A'..='Z' {
-                let g = caps(face).letter(c).unwrap_or_else(|| panic!("{face:?} {c}"));
-                assert!(!g.is_empty() && g.iter().all(|c| c.len() > 2), "{face:?} {c}");
+                let g = caps(face)
+                    .letter(c)
+                    .unwrap_or_else(|| panic!("{face:?} {c}"));
+                assert!(
+                    !g.is_empty() && g.iter().all(|c| c.len() > 2),
+                    "{face:?} {c}"
+                );
             }
         }
     }
 
     #[test]
-    fn an_initial_grows_in_the_same_way_every_time() {
-        let a = Scene::build('H', "spell:hello.ts:hello");
-        let b = Scene::build('H', "spell:hello.ts:hello");
-        assert!(a.end > 0.0 && !a.orn.stems.is_empty(), "it grows an ornament");
-        assert_eq!(a.paint(0.5, 48, &INKS), b.paint(0.5, 48, &INKS));
-        let bare = a.paint(0.0, 48, &INKS);
-        let grown = a.paint(1.0, 48, &INKS);
-        let inked = |p: &[u8]| p.chunks(4).filter(|p| p[3] > 128).count();
-        assert!(inked(&bare) > 100, "the letter and its frame are there from the start");
-        assert_ne!(bare, grown, "and the ornament grows in");
+    fn an_initial_is_inscribed_the_same_way_every_time() {
+        for (kind, inks) in KINDS {
+            let a = Scene::build('H', "spell:hello.ts:hello", kind);
+            let b = Scene::build('H', "spell:hello.ts:hello", kind);
+            assert!(a.marks.len() > 10, "{kind:?} draws a figure");
+            assert_eq!(a.paint(0.5, 48, &inks), b.paint(0.5, 48, &inks));
+            let bare = a.paint(0.0, 48, &inks);
+            let drawn = a.paint(1.0, 48, &inks);
+            let inked = |p: &[u8]| p.chunks(4).filter(|p| p[3] > 128).count();
+            assert!(
+                inked(&bare) > 100,
+                "the letter and its frame are there from the start"
+            );
+            assert_ne!(bare, drawn, "and the figure is drawn in");
+        }
+    }
+
+    #[test]
+    fn each_spell_has_a_figure_of_its_own() {
+        for (kind, _) in KINDS {
+            let a = Scene::build('H', "spell:hello.ts:hello", kind);
+            let b = Scene::build('H', "spell:hello.ts:hi", kind);
+            assert_eq!(a.letter, b.letter, "one kind: the same letter in the same frame");
+            assert_ne!(
+                format!("{:?}", a.marks),
+                format!("{:?}", b.marks),
+                "{kind:?}: drawn round it its own way"
+            );
+        }
     }
 
     /// A sheet of initials on parchment, for looking at: `cargo test --release sheet -- --ignored`.
+    /// For each kind, its spells a third, two thirds and all the way inscribed.
     #[test]
     #[ignore]
     fn sheet() {
         let ids = [
-            "spell:arrange.ts:arrange", "spell:brew.ts:brew", "entry:claude-usage", "spell:clip.ts:history",
-            "spell:uuid.ts:uuid", "spell:git.ts:branches", "spell:hello.ts:hello", "entry:insomnia",
-            "spell:party.ts:party", "spell:sky.ts:sky", "spell:note.ts:note", "spell:timer.ts:timer",
+            "spell:arrange.ts:arrange",
+            "spell:brew.ts:brew",
+            "entry:claude-usage",
+            "spell:clip.ts:history",
+            "spell:uuid.ts:uuid",
+            "spell:git.ts:branches",
+            "spell:hello.ts:hello",
+            "entry:insomnia",
         ];
-        let px: u32 = std::env::var("PX").ok().and_then(|v| v.parse().ok()).unwrap_or(240);
-        let cols = 6;
-        let ts = [0.0f32, 0.5, 1.0];
-        let rows = ids.len().div_ceil(cols) * ts.len();
+        let px: u32 = std::env::var("PX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200);
+        let ts = [0.33f32, 0.66, 1.0];
+        let cols = ids.len();
+        let rows = KINDS.len() * ts.len();
         let (w, h) = (px * cols as u32, px * rows as u32);
         let mut sheet = tiny_skia::Pixmap::new(w, h).unwrap();
         sheet.fill(tiny_skia::Color::from_rgba8(232, 214, 176, 255));
-        for (i, id) in ids.iter().enumerate() {
-            let letter = id.rsplit(':').next().unwrap().chars().next().unwrap().to_ascii_uppercase();
-            let began = std::time::Instant::now();
-            let scene = Scene::build(letter, id);
-            let built = began.elapsed();
-            let began = std::time::Instant::now();
-            let _ = scene.paint(0.4, 124, &INKS);
-            let first = began.elapsed();
-            let began = std::time::Instant::now();
-            let _ = scene.paint(0.5, 124, &INKS);
-            let _ = scene.paint(0.6, 124, &INKS);
-            eprintln!("built in {built:?}, first painted in {first:?}, then in {:?}", began.elapsed() / 2);
-            eprintln!("{id}: {:?}, {} stems", scene.style.face, scene.orn.stems.len());
-            for (k, &t) in ts.iter().enumerate() {
-                let rgba = scene.paint(t, px, &INKS);
-                let (x0, y0) = ((i % cols) as u32 * px, ((i / cols) * ts.len() + k) as u32 * px);
+        let mut cells = Vec::new();
+        for (k, (kind, inks)) in KINDS.into_iter().enumerate() {
+            for (j, &t) in ts.iter().enumerate() {
+                for (i, id) in ids.iter().enumerate() {
+                    cells.push((i, k * ts.len() + j, kind, inks, *id, t));
+                }
+            }
+        }
+        {
+            for (col, row, kind, inks, id, t) in cells {
+                let letter = id
+                    .rsplit(':')
+                    .next()
+                    .unwrap()
+                    .chars()
+                    .next()
+                    .unwrap()
+                    .to_ascii_uppercase();
+                let began = std::time::Instant::now();
+                let scene = Scene::build(letter, id, kind);
+                if t == 1.0 {
+                    let built = began.elapsed();
+                    let began = std::time::Instant::now();
+                    let _ = scene.paint(0.5, 124, &inks);
+                    eprintln!(
+                        "{kind:?} {id}: built in {built:?}, painted in {:?}, {} marks",
+                        began.elapsed(),
+                        scene.marks.len()
+                    );
+                }
+                let rgba = scene.paint(t, px, &inks);
+                let (x0, y0) = (col as u32 * px, row as u32 * px);
                 let data = sheet.data_mut();
                 for y in 0..px {
                     for x in 0..px {
@@ -1322,24 +1480,15 @@ mod tests {
                         let d = (((y0 + y) * w + x0 + x) * 4) as usize;
                         let a = rgba[s + 3] as f32 / 255.0;
                         for c in 0..3 {
-                            data[d + c] = (data[d + c] as f32 * (1.0 - a) + rgba[s + c] as f32 * a) as u8;
+                            data[d + c] =
+                                (data[d + c] as f32 * (1.0 - a) + rgba[s + c] as f32 * a) as u8;
                         }
                     }
                 }
             }
         }
-        sheet.save_png(std::env::var("OUT").unwrap_or("/tmp/book/initials.png".into())).unwrap();
-    }
-
-    #[test]
-    fn every_recipe_grows() {
-        for (i, recipe) in [Recipe::Woodcut, Recipe::Gilt, Recipe::Penwork, Recipe::Engraved]
-            .into_iter()
-            .enumerate()
-        {
-            let style = Style::recipe(recipe, &mut Rng::new(7 + i as u32));
-            let s = Scene::of('R', style, 11);
-            assert!(!s.orn.stems.is_empty() || !s.orn.dots.is_empty(), "{recipe:?}");
-        }
+        sheet
+            .save_png(std::env::var("OUT").unwrap_or("/tmp/book/initials.png".into()))
+            .unwrap();
     }
 }

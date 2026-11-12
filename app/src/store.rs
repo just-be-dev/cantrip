@@ -64,7 +64,10 @@ pub enum ActionKindItem {
     RevealInFinder(String),
     CopyText(String),
     Builtin(Builtin),
-    DaemonMenu { daemon: String, item: WireMenuItem },
+    DaemonMenu {
+        daemon: String,
+        item: WireMenuItem,
+    },
     /// Turn a grimoire entry on or off (`views::book`).
     SetEnabled {
         entry: String,
@@ -734,7 +737,8 @@ impl Cantrip {
                     e.enabled = enabled;
                 }
                 self.changed();
-                self.services.send(AppMessage::SetEnabled { entry, enabled });
+                self.services
+                    .send(AppMessage::SetEnabled { entry, enabled });
                 let title = if enabled {
                     format!("{title} enabled")
                 } else {

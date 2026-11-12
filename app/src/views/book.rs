@@ -136,7 +136,7 @@ impl Book {
         Some(
             self.illuminations
                 .borrow_mut()
-                .pixels(&r.id, letter, t, px, &v.print),
+                .pixels(&r.id, letter, v.initial, t, px, &v.print),
         )
     }
 
@@ -147,7 +147,7 @@ impl Book {
     }
 
     /// Builds the initials of `rows` ahead, nearest the highlight first.
-    fn prepare_initials(&self, rows: &[Row], selection: usize, look: Look) {
+    fn prepare_initials(&self, rows: &[Row], selection: usize, v: Ink, look: Look) {
         let mut wants: Vec<(usize, String, char)> = rows
             .iter()
             .enumerate()
@@ -160,7 +160,7 @@ impl Book {
         let px = (ILLUMINATION * look.scale).round() as u32;
         self.illuminations
             .borrow_mut()
-            .prepare(wants.into_iter().map(|(_, id, c)| (id, c)), px);
+            .prepare(wants.into_iter().map(|(_, id, c)| (id, c)), v.initial, px);
     }
 
     /// The highlight moved to `index`: turn a leaf toward it.
@@ -590,6 +590,8 @@ struct Ink {
     letter: Color,
     /// What the initials are printed in (`initial`): ink, rubric, gold and a blue, as sRGB.
     print: initial::Inks,
+    /// The kind of initial the entries open with.
+    initial: initial::Kind,
 }
 
 fn ink(theme: Theme) -> Ink {
@@ -607,6 +609,8 @@ fn ink(theme: Theme) -> Ink {
                 // Lapis.
                 azure: [0.16, 0.26, 0.52],
             },
+            // Occult geometry: a magic circle on ink.
+            initial: initial::Kind::Seal,
         },
         // Oak-gall black with a violet cast, murex purple, and gold leaf.
         Theme::Arcane => Ink {
@@ -621,6 +625,8 @@ fn ink(theme: Theme) -> Ink {
                 // Woad, dark towards night.
                 azure: [0.14, 0.24, 0.48],
             },
+            // Starlight: a chart of the sky.
+            initial: initial::Kind::Chart,
         },
     }
 }
@@ -813,7 +819,7 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
         .beneath()
         .filter(|(_, hi)| *hi < rows.len())
         .unwrap_or((s.selection(), s.selection()));
-    book.prepare_initials(&rows, s.selection(), look);
+    book.prepare_initials(&rows, s.selection(), v, look);
     let left_picture = |line: usize| &tex.pages_left[variant_left(rows.get(line))];
     let right_picture = |line: usize| &tex.pages_right[variant_right(rows.get(line))];
     // While the cover swings over, the left side is bare desk; the cover lands as it.
@@ -878,7 +884,11 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
             .child(flat_face(
                 paper::page_rect(true),
                 left_picture(back),
-                Some(write.entry("leaf-entry", back, false).opacity(book.leaves.ink())),
+                Some(
+                    write
+                        .entry("leaf-entry", back, false)
+                        .opacity(book.leaves.ink()),
+                ),
             ))
             .child(warp::capture(true))
             .child(binding(true, &tex, "binding-left-again"))
@@ -890,11 +900,11 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
     }
     let spread = spread
         // The entry's ink seeps into the page once the cover has landed.
-        .child(
-            page(true)
-                .opacity(book.leaves.ink())
-                .child(write.entry("entry", lo, book.leaves.turns.is_empty())),
-        )
+        .child(page(true).opacity(book.leaves.ink()).child(write.entry(
+            "entry",
+            lo,
+            book.leaves.turns.is_empty(),
+        )))
         .child(page(false).child(write.source("source", hi)))
         .child(leaves(
             &book.leaves,
@@ -1276,34 +1286,33 @@ fn entry_page(
 /// A gilt frame round a rubric field with the letter in leaf: the initial of a title that
 /// doesn't begin with a letter.
 fn plain_initial(initial: &str, v: Ink) -> El {
-    el()
-    .size(50.0, 50.0)
-    .center()
-    .radius(3.0)
-    .fill(v.rubric)
-    .radial_gradient(
-        [0.3, 0.25],
-        60.0,
-        [
-            (0.0, Color::WHITE.alpha(0.18)),
-            (1.0, Color::BLACK.alpha(0.25)),
-        ],
-    )
-    .border(2.0, v.gilt)
-    .box_shadow(Shadow {
-        x: 1.0,
-        y: 2.0,
-        blur: 3.0,
-        spread: 0.0,
-        color: srgb(0.25, 0.12, 0.04, 0.45),
-        inset: false,
-    })
-    .child(
-        el().pin(Some(3.5), Some(3.5), Some(3.5), Some(3.5))
-            .radius(1.5)
-            .border(1.0, v.gilt.alpha(0.55)),
-    )
-    .child(text(initial.to_string()).font(hand(36.0)).color(v.letter))
+    el().size(50.0, 50.0)
+        .center()
+        .radius(3.0)
+        .fill(v.rubric)
+        .radial_gradient(
+            [0.3, 0.25],
+            60.0,
+            [
+                (0.0, Color::WHITE.alpha(0.18)),
+                (1.0, Color::BLACK.alpha(0.25)),
+            ],
+        )
+        .border(2.0, v.gilt)
+        .box_shadow(Shadow {
+            x: 1.0,
+            y: 2.0,
+            blur: 3.0,
+            spread: 0.0,
+            color: srgb(0.25, 0.12, 0.04, 0.45),
+            inset: false,
+        })
+        .child(
+            el().pin(Some(3.5), Some(3.5), Some(3.5), Some(3.5))
+                .radius(1.5)
+                .border(1.0, v.gilt.alpha(0.55)),
+        )
+        .child(text(initial.to_string()).font(hand(36.0)).color(v.letter))
 }
 
 /// What the book records of a spell beside its entry.

@@ -91,13 +91,10 @@ impl Noise {
         let fade = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
         let (u, v) = (fade(xf), fade(yf));
         let x1 = grad(aa, xf, yf) + u * (grad(ba, xf - 1.0, yf) - grad(aa, xf, yf));
-        let x2 = grad(ab, xf, yf - 1.0) + u * (grad(bb, xf - 1.0, yf - 1.0) - grad(ab, xf, yf - 1.0));
+        let x2 =
+            grad(ab, xf, yf - 1.0) + u * (grad(bb, xf - 1.0, yf - 1.0) - grad(ab, xf, yf - 1.0));
         (x1 + v * (x2 - x1)) * 1.42
     }
-}
-
-pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
 }
 
 pub fn signed_area(pts: &[P]) -> f32 {
@@ -182,59 +179,3 @@ pub fn circle_poly(x: f32, y: f32, r: f32) -> Vec<P> {
         .collect()
 }
 
-/// Squared Euclidean distance transform, in place (Felzenszwalb and Huttenlocher).
-pub fn edt(f: &mut [f64], nx: usize, ny: usize) {
-    const INF: f64 = 1e20;
-    let n = nx.max(ny);
-    let mut d = vec![0.0f64; n];
-    let mut v = vec![0usize; n];
-    let mut z = vec![0.0f64; n + 1];
-    let mut g = vec![0.0f64; n];
-    let mut one = |g: &[f64], d: &mut [f64], len: usize| {
-        let mut k = 0usize;
-        v[0] = 0;
-        z[0] = -INF;
-        z[1] = INF;
-        for q in 1..len {
-            let mut s;
-            loop {
-                let r = v[k];
-                s = ((g[q] + (q * q) as f64) - (g[r] + (r * r) as f64)) / (2 * q - 2 * r) as f64;
-                if s <= z[k] {
-                    if k == 0 {
-                        break;
-                    }
-                    k -= 1;
-                } else {
-                    break;
-                }
-            }
-            k += 1;
-            v[k] = q;
-            z[k] = s;
-            z[k + 1] = INF;
-        }
-        k = 0;
-        for (q, dq) in d.iter_mut().enumerate().take(len) {
-            while z[k + 1] < q as f64 {
-                k += 1;
-            }
-            let r = v[k];
-            *dq = ((q as f64) - r as f64).powi(2) + g[r];
-        }
-    };
-    for x in 0..nx {
-        for y in 0..ny {
-            g[y] = f[y * nx + x];
-        }
-        one(&g, &mut d, ny);
-        for y in 0..ny {
-            f[y * nx + x] = d[y];
-        }
-    }
-    for y in 0..ny {
-        g[..nx].copy_from_slice(&f[y * nx..y * nx + nx]);
-        one(&g, &mut d, nx);
-        f[y * nx..y * nx + nx].copy_from_slice(&d[..nx]);
-    }
-}

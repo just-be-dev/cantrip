@@ -239,8 +239,11 @@ pub fn dormant() -> Vec<WireEntry> {
 /// files): the repository's own examples where they exist.
 fn incantation(c: &WireCommand) -> String {
     match c.id.as_str() {
-        "hello.ts:hello" => include_str!("../../grimoire/hello.ts").replace("export default", "export const hello ="),
-        "uuid.ts:uuid" => include_str!("../../grimoire/uuid.ts").replace("export default", "export const uuid ="),
+        "hello.ts:hello" => include_str!("../../grimoire/hello.ts")
+            .replace("export default", "export const hello ="),
+        "uuid.ts:uuid" => {
+            include_str!("../../grimoire/uuid.ts").replace("export default", "export const uuid =")
+        }
         _ => {
             let name = c.id.split(':').next_back().unwrap_or("spell");
             let subtitle = c.subtitle.clone().unwrap_or_default();
@@ -254,7 +257,11 @@ fn incantation(c: &WireCommand) -> String {
                 c.title,
                 c.title,
                 c.icon.clone().unwrap_or_default(),
-                c.keywords.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", "),
+                c.keywords
+                    .iter()
+                    .map(|k| format!("\"{k}\""))
+                    .collect::<Vec<_>>()
+                    .join(", "),
             )
         }
     }
@@ -267,7 +274,10 @@ fn write_incantations(s: &mut Cantrip) {
         book.set_source(&c.id, &incantation(c));
     }
     book.set_source("insomnia", include_str!("../../grimoire/insomnia/index.ts"));
-    book.set_source("claude-usage", include_str!("../../grimoire/claude-usage.ts"));
+    book.set_source(
+        "claude-usage",
+        include_str!("../../grimoire/claude-usage.ts"),
+    );
 }
 
 /// The grimoire as a book, open on its third spell.

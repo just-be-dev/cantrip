@@ -12,32 +12,17 @@ use super::geom::P;
 pub enum Face {
     /// Blackletter: UnifrakturMaguntia.
     Fraktur,
-    /// Insular majuscules: Uncial Antiqua.
-    Uncial,
-    /// Lombardic versals: Macondo Swash Caps.
-    Lombardic,
     /// Roman capitals with flourishes: Cinzel Decorative Bold.
     Roman,
-    /// A heavy book capital: EB Garamond Bold.
-    Garamond,
 }
 
-pub const FACES: [Face; 5] = [
-    Face::Fraktur,
-    Face::Uncial,
-    Face::Lombardic,
-    Face::Roman,
-    Face::Garamond,
-];
+pub const FACES: [Face; 2] = [Face::Fraktur, Face::Roman];
 
 impl Face {
     fn source(self) -> &'static str {
         match self {
             Face::Fraktur => include_str!("caps/unifrakturmaguntia-400.json"),
-            Face::Uncial => include_str!("caps/uncial-antiqua-400.json"),
-            Face::Lombardic => include_str!("caps/macondo-swash-caps-400.json"),
             Face::Roman => include_str!("caps/cinzel-decorative-700.json"),
-            Face::Garamond => include_str!("caps/eb-garamond-700.json"),
         }
     }
 }

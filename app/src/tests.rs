@@ -910,16 +910,19 @@ fn an_initial_grows_in_once_its_page_has_settled() {
     press(&mut rt, Key::Enter);
     let first = rt.state.rows()[0].id.clone();
     let second = rt.state.rows()[1].id.clone();
-    let grown = |rt: &rune::Runtime<Cantrip>, id: &str| {
-        rt.state.book.as_ref().and_then(|b| b.grown_at(id))
-    };
+    let grown =
+        |rt: &rune::Runtime<Cantrip>, id: &str| rt.state.book.as_ref().and_then(|b| b.grown_at(id));
     // Under the cover, nothing grows.
     rt.update(|s, tx| {
         s.animate_book(10.0, tx);
         s.animate_book(10.3, tx);
     });
     settle(&mut rt);
-    assert_eq!(grown(&rt, &first), None, "not while the cover is in the air");
+    assert_eq!(
+        grown(&rt, &first),
+        None,
+        "not while the cover is in the air"
+    );
     // Landed: its initial starts growing once the ink has seeped in, and frames keep coming
     // until it has.
     rt.update(|s, tx| {
