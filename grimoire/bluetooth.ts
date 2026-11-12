@@ -7,7 +7,8 @@
 // range it goes to the top as "Back in range" with ↵ to Reconnect, and
 // Reconnect Bluetooth Device reconnects the last one without the list.
 //
-// It drives macOS's Bluetooth through blueutil (`brew install blueutil`). The first
+// Nothing to install: it talks to macOS's IOBluetooth framework through
+// JavaScript for Automation (`osascript -l JavaScript`, part of macOS). The first
 // scan asks for Bluetooth access for Cantrip.
 import { homedir } from "node:os"
 import * as Config from "effect/Config"
@@ -22,16 +23,133 @@ import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import { Action, Spell, Ui, type View } from "cantrip"
 
-/** How long each scan listens before the list updates. Name lookups add a little. */
+/** How long each scan listens before the list updates. */
 const SCAN_SECONDS = 5
-/** Asked for by old devices that want a PIN; anything newer ignores it. */
-const LEGACY_PIN = "0000"
+/** How long to wait for a device to answer a connection. */
+const CONNECT_SECONDS = 15
+/** How long to wait for pairing, which may need a code typed on the device. */
+const PAIR_SECONDS = 60
 
-// GUI apps don't get Homebrew's bin on their PATH, so look in the usual places.
-const BLUEUTIL = ["/opt/homebrew/bin/blueutil", "/usr/local/bin/blueutil"]
-const BREW = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+// MARK: IOBluetooth
 
-// MARK: blueutil
+/**
+ * Runs in `osascript -l JavaScript` with IOBluetooth bridged in. Results go to
+ * stdout; `console.log` goes to stderr, which carries pairing prompts as they
+ * come (`confirm N`, `passkey N`). A thrown error exits non-zero.
+ */
+const HELPER = String.raw`
+ObjC.import("IOBluetooth")
+ObjC.import("Foundation")
+
+function run(argv) {
+  const [command, arg, seconds] = argv
+  const spin = (s) => $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(s))
+  const waitFor = (done, s) => {
+    const until = Date.now() + s * 1000
+    while (!done() && Date.now() < until) spin(0.1)
+    return done()
+  }
+  const describe = (d) => ({
+    address: ObjC.unwrap(d.addressString),
+    // Unnamed devices report their address as their name.
+    name: /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(ObjC.unwrap(d.name) ?? "") ? null : ObjC.unwrap(d.name) ?? null,
+    paired: d.isPaired,
+    connected: d.isConnected
+  })
+  const list = (devices) => {
+    const out = []
+    for (let i = 0; i < devices.count; i++) out.push(describe(devices.objectAtIndex(i)))
+    return JSON.stringify(out)
+  }
+  const device = () => {
+    const d = $.IOBluetoothDevice.deviceWithAddressString(arg)
+    if (!d || d.isNil()) throw new Error("No device " + arg)
+    return d
+  }
+
+  switch (command) {
+    case "power":
+      return String($.IOBluetoothHostController.defaultController.powerState)
+    case "power-on": {
+      ObjC.bindFunction("IOBluetoothPreferenceSetControllerPowerState", ["void", ["int"]])
+      $.IOBluetoothPreferenceSetControllerPowerState(1)
+      if (!waitFor(() => $.IOBluetoothHostController.defaultController.powerState === 1, 5)) {
+        throw new Error("Bluetooth didn't turn on")
+      }
+      return ""
+    }
+    case "paired":
+      return list($.IOBluetoothDevice.pairedDevices)
+    case "inquiry": {
+      const inquiry = $.IOBluetoothDeviceInquiry.inquiryWithDelegate(null)
+      inquiry.updateNewDeviceNames = true
+      inquiry.start
+      spin(Number(seconds))
+      inquiry.stop
+      return list(inquiry.foundDevices)
+    }
+    case "connect": {
+      const d = device()
+      if (d.isConnected) return ""
+      const result = d.openConnection(null)
+      if (result !== 0) throw new Error("Couldn't start a connection (" + result + ")")
+      if (!waitFor(() => d.isConnected, Number(seconds))) throw new Error("It didn't answer. Is it on and nearby?")
+      return ""
+    }
+    case "disconnect": {
+      const d = device()
+      if (!d.isConnected) return ""
+      d.closeConnection
+      if (!waitFor(() => !d.isConnected, 10)) throw new Error("It's still connected")
+      return ""
+    }
+    case "pair": {
+      const d = device()
+      if (d.isPaired) return ""
+      let finished = null
+      ObjC.registerSubclass({
+        name: "CantripPairing",
+        methods: {
+          // Numeric comparison: accept, and report the number so it can be checked.
+          "devicePairingUserConfirmationRequest:numericValue:": {
+            types: ["void", ["id", "unsigned int"]],
+            implementation: (sender, n) => {
+              console.log("confirm " + String(n).padStart(6, "0"))
+              sender.replyUserConfirmation(true)
+            }
+          },
+          "devicePairingUserPasskeyNotification:passkey:": {
+            types: ["void", ["id", "unsigned int"]],
+            implementation: (sender, n) => console.log("passkey " + String(n).padStart(6, "0"))
+          },
+          "devicePairingPINCodeRequest:": {
+            types: ["void", ["id"]],
+            implementation: (sender) => {
+              finished = "This device wants a PIN code; pair it in System Settings"
+              sender.stop
+            }
+          },
+          "devicePairingFinished:error:": {
+            types: ["void", ["id", "int"]],
+            implementation: (sender, error) => {
+              finished = error === 0 ? "ok" : "Pairing failed (" + error + ")"
+            }
+          }
+        }
+      })
+      const pairing = $.IOBluetoothDevicePair.pairWithDevice(d)
+      pairing.delegate = $.CantripPairing.alloc.init
+      if (pairing.start !== 0) throw new Error("Couldn't start pairing")
+      waitFor(() => finished !== null || d.isPaired, Number(seconds))
+      pairing.stop
+      if (d.isPaired) return ""
+      throw new Error(finished && finished !== "ok" ? finished : "It didn't pair. Is it in pairing mode?")
+    }
+    default:
+      throw new Error("Unknown command " + command)
+  }
+}
+`
 
 class BluetoothError extends Schema.TaggedError<BluetoothError>()("BluetoothError", {
   message: Schema.String
@@ -47,35 +165,20 @@ type Device = typeof Device.Type
 
 const decodeDevices = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Device)))
 
-const find = (candidates: ReadonlyArray<string>) =>
-  Effect.gen(function*() {
-    const fs = yield* FileSystem.FileSystem
-    for (const path of candidates) {
-      if (yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false))) return path
-    }
-    return undefined
-  })
-
-interface Exec {
-  readonly exitCode: number
-  readonly stdout: string
-  readonly stderr: string
+/** osascript reports a thrown error as `…: execution error: Error: Error: <message> (-2700)`. */
+const errorMessage = (stderr: string) => {
+  const line = stderr.split("\n").findLast((l) => l.includes("execution error")) ?? stderr
+  return line.replace(/^.*execution error: (?:Error: )*/, "").replace(/ \(-?\d+\)$/, "").trim()
 }
 
 /**
- * Runs blueutil to completion. `onStderr` sees each line it prints there as it
- * comes (pairing prompts) and may answer on its stdin.
+ * Runs one helper command to completion and returns its stdout. `onStderr`
+ * sees each line it logs as it comes (pairing prompts).
  */
-const exec = (
-  bin: string,
-  args: ReadonlyArray<string>,
-  onStderr?: (line: string, answer: (text: string) => Effect.Effect<void>) => Effect.Effect<void>
-) =>
+const bluetooth = (args: ReadonlyArray<string>, onStderr?: (line: string) => Effect.Effect<void>) =>
   Effect.scoped(Effect.gen(function*() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-    const handle = yield* spawner.spawn(ChildProcess.make(bin, [...args]))
-    const answer = (text: string) =>
-      Stream.make(Uint8Array.from(text, (c) => c.charCodeAt(0))).pipe(Stream.run(handle.stdin), Effect.ignore)
+    const handle = yield* spawner.spawn(ChildProcess.make("/usr/bin/osascript", ["-l", "JavaScript", "-e", HELPER, ...args]))
     const lines: Array<string> = []
     const [stdout, , exitCode] = yield* Effect.all([
       handle.stdout.pipe(Stream.decodeText, Stream.mkString),
@@ -84,27 +187,17 @@ const exec = (
         Stream.splitLines,
         Stream.runForEach((line) => {
           lines.push(line)
-          return onStderr ? onStderr(line, answer) : Effect.void
+          return onStderr ? onStderr(line) : Effect.void
         })
       ),
       handle.exitCode
     ], { concurrency: "unbounded" })
-    const result: Exec = { exitCode, stdout, stderr: lines.join("\n") }
-    return result
-  })).pipe(Effect.mapError((e) => new BluetoothError({ message: e.message })))
+    if (exitCode === 0) return stdout
+    return yield* new BluetoothError({ message: errorMessage(lines.join("\n")) || `osascript exited with ${exitCode}` })
+  })).pipe(Effect.catchTag("PlatformError", (e) => Effect.fail(new BluetoothError({ message: e.message }))))
 
-/** Runs blueutil and fails with what it said if it exits non-zero. */
-const blueutil = (bin: string, args: ReadonlyArray<string>, onStderr?: Parameters<typeof exec>[2]) =>
-  exec(bin, args, onStderr).pipe(
-    Effect.flatMap((r) =>
-      r.exitCode === 0
-        ? Effect.succeed(r.stdout)
-        : Effect.fail(new BluetoothError({ message: r.stderr.trim() || `blueutil exited with ${r.exitCode}` }))
-    )
-  )
-
-const list = (bin: string, args: ReadonlyArray<string>) =>
-  blueutil(bin, [...args, "--format", "json"]).pipe(
+const list = (args: ReadonlyArray<string>) =>
+  bluetooth(args).pipe(
     Effect.flatMap((out) => decodeDevices(out.trim() || "[]")),
     Effect.mapError((e) => e instanceof BluetoothError ? e : new BluetoothError({ message: String(e) }))
   )
@@ -172,21 +265,17 @@ const ago = (then: number, now: number) => {
 type Notify = (toast: Ui.Toast) => Effect.Effect<void>
 
 /** Pairs `d` first if it isn't yet, then connects. `stage` hears each step begin. */
-const pairAndConnect = (bin: string, d: Device, notify: Notify, stage: (busy: Busy) => Effect.Effect<void>) =>
+const pairAndConnect = (d: Device, notify: Notify, stage: (busy: Busy) => Effect.Effect<void>) =>
   Effect.gen(function*() {
     const name = nameOf(d)
     if (!d.paired) {
       yield* stage("Pairing…")
-      yield* blueutil(bin, ["--pair", d.address, LEGACY_PIN], (line, answer) => {
-        // Numeric comparison: say yes, and show the number so it can be checked.
-        const confirm = /display number (\d+)/.exec(line)
+      yield* bluetooth(["pair", d.address, String(PAIR_SECONDS)], (line) => {
+        const confirm = /^confirm (\d+)/.exec(line)
         if (confirm) {
-          return Effect.andThen(
-            notify({ title: `Pairing code ${confirm[1]}`, message: `It should match the one on ${name}` }),
-            answer("yes\n")
-          )
+          return notify({ title: `Pairing code ${confirm[1]}`, message: `It should match the one on ${name}` })
         }
-        const passkey = /Input (?:passkey|pin) (\S+)/i.exec(line)
+        const passkey = /^passkey (\d+)/.exec(line)
         if (passkey) {
           return notify({ title: `Type ${passkey[1]} on ${name}`, message: "then press Return on it" })
         }
@@ -194,7 +283,7 @@ const pairAndConnect = (bin: string, d: Device, notify: Notify, stage: (busy: Bu
       })
     }
     yield* stage("Connecting…")
-    yield* blueutil(bin, ["--connect", d.address])
+    yield* bluetooth(["connect", d.address, String(CONNECT_SECONDS)])
   })
 
 // MARK: The list
@@ -228,7 +317,7 @@ const rank = (d: Device, s: State) => {
   return 3
 }
 
-/** A best guess from the name; blueutil doesn't report the device class. */
+/** A best guess from the name; the Bluetooth device class is too coarse to pick an icon. */
 const iconFor = (d: Pick<Device, "name">) => {
   const n = (d.name ?? "").toLowerCase()
   if (/airpods max/.test(n)) return "airpods.max"
@@ -249,7 +338,7 @@ const iconFor = (d: Pick<Device, "name">) => {
 
 type Services = Ui.Ui | ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 
-const browse = (bin: string): Effect.Effect<void, never, Services> =>
+const browse: Effect.Effect<void, never, Services> =
   Effect.scoped(Effect.gen(function*() {
     const ui = yield* Ui.Ui
     const fs = yield* FileSystem.FileSystem
@@ -323,12 +412,12 @@ const browse = (bin: string): Effect.Effect<void, never, Services> =>
           })
         }
       })
-    const refreshPaired = list(bin, ["--paired"]).pipe(Effect.flatMap((found) => merge(found)))
+    const refreshPaired = list(["paired"]).pipe(Effect.flatMap((found) => merge(found)))
 
     const scanForever = Effect.gen(function*() {
       yield* update((s) => ({ ...s, scanning: true }))
       yield* ui.setLoading(true)
-      yield* list(bin, ["--inquiry", String(SCAN_SECONDS)]).pipe(
+      yield* list(["inquiry", "", String(SCAN_SECONDS)]).pipe(
         Effect.flatMap((found) => merge(found, { nearby: true })),
         Effect.andThen(refreshPaired),
         Effect.forever
@@ -348,7 +437,7 @@ const browse = (bin: string): Effect.Effect<void, never, Services> =>
 
     const connect = (d: Device) =>
       withoutScanning(Effect.gen(function*() {
-        yield* pairAndConnect(bin, d, ui.toast, (busy) => setBusy(d.address, busy))
+        yield* pairAndConnect(d, ui.toast, (busy) => setBusy(d.address, busy))
         yield* refreshPaired
         yield* ui.hud(`Connected to ${nameOf(d)}`)
       }).pipe(
@@ -364,7 +453,7 @@ const browse = (bin: string): Effect.Effect<void, never, Services> =>
     const disconnect = (d: Device) =>
       withoutScanning(Effect.gen(function*() {
         yield* setBusy(d.address, "Disconnecting…")
-        yield* blueutil(bin, ["--disconnect", d.address])
+        yield* bluetooth(["disconnect", d.address])
         yield* refreshPaired
         yield* ui.toast({ style: "success", title: `Disconnected ${nameOf(d)}` })
       }).pipe(
@@ -423,7 +512,7 @@ const browse = (bin: string): Effect.Effect<void, never, Services> =>
     }
 
     yield* render
-    yield* ensurePower(bin)
+    yield* ensurePower
     yield* refreshPaired.pipe(
       Effect.catch((e) => ui.toast({ style: "failure", title: "Couldn't list devices", message: e.message }))
     )
@@ -431,11 +520,11 @@ const browse = (bin: string): Effect.Effect<void, never, Services> =>
     yield* Effect.never
   }))
 
-const ensurePower = (bin: string) =>
+const ensurePower =
   Effect.gen(function*() {
-    const power = yield* blueutil(bin, ["--power"])
+    const power = yield* bluetooth(["power"])
     if (power.trim() === "1") return
-    yield* blueutil(bin, ["--power", "1"])
+    yield* bluetooth(["power-on"])
     yield* Ui.toast({ style: "success", title: "Bluetooth turned on" })
   }).pipe(Effect.catch((e) => Ui.toast({ style: "failure", title: "Couldn't turn Bluetooth on", message: e.message })))
 
@@ -446,14 +535,14 @@ const ensurePower = (bin: string) =>
  * without showing the list. Paired ones are tried first, newest first; it moves
  * on when one isn't around.
  */
-const reconnectLast = (bin: string) =>
+const reconnectLast =
   Effect.gen(function*() {
     const history = yield* loadHistory
     if (history.size === 0) {
       return yield* Ui.hud("No Bluetooth devices to reconnect yet")
     }
-    yield* ensurePower(bin)
-    const paired = new Map((yield* list(bin, ["--paired"])).map((d) => [d.address, d]))
+    yield* ensurePower
+    const paired = new Map((yield* list(["paired"])).map((d) => [d.address, d]))
     const candidates = [...history.values()]
       .filter((r) => !paired.get(r.address)?.connected)
       .sort((a, b) => b.lastConnected - a.lastConnected)
@@ -463,7 +552,7 @@ const reconnectLast = (bin: string) =>
     const notify: Notify = (t) => ui.hud(t.message ? `${t.title}: ${t.message}` : t.title)
     for (const r of candidates) {
       const d = paired.get(r.address) ?? { ...r, paired: false, connected: false }
-      const ok = yield* pairAndConnect(bin, d, notify, () => Effect.void).pipe(
+      const ok = yield* pairAndConnect(d, notify, () => Effect.void).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false)
       )
@@ -475,56 +564,12 @@ const reconnectLast = (bin: string) =>
     yield* Ui.hud(`Couldn't reach ${candidates.map(nameOf).join(", ")}`)
   }).pipe(Effect.catch((e) => Ui.hud(`Bluetooth: ${e.message}`)))
 
-// MARK: Without blueutil
-
-const missing = (then: (bin: string) => Effect.Effect<void, never, Services>) =>
-  Effect.gen(function*() {
-    const brew = yield* find(BREW)
-    const install = brew
-      ? [Action.run(
-        "Install with Homebrew",
-        Effect.gen(function*() {
-          yield* Ui.setLoading(true)
-          yield* Ui.toast({ title: "Installing blueutil…" })
-          const result = yield* exec(brew, ["install", "blueutil"]).pipe(Effect.ensuring(Ui.setLoading(false)))
-          const bin = yield* find(BLUEUTIL)
-          if (result.exitCode !== 0 || !bin) {
-            return yield* Ui.toast({ style: "failure", title: "Install failed", message: result.stderr.trim() })
-          }
-          yield* then(bin)
-        }).pipe(Effect.catch((e) => Ui.toast({ style: "failure", title: "Install failed", message: e.message }))),
-        { icon: "arrow.down.circle" }
-      )]
-      : []
-    yield* Ui.detail({
-      markdown: [
-        "# Bluetooth needs blueutil",
-        "",
-        "This spell talks to macOS's Bluetooth through [blueutil](https://github.com/toy/blueutil), a small command line tool.",
-        "",
-        brew ? "Press ↵ to install it with Homebrew." : "Install it with Homebrew:",
-        "",
-        "```sh",
-        "brew install blueutil",
-        "```"
-      ].join("\n"),
-      actions: [
-        ...install,
-        Action.copy("Copy Install Command", "brew install blueutil"),
-        Action.open("Open blueutil on GitHub", "https://github.com/toy/blueutil")
-      ]
-    })
-  })
-
 export default Spell.make({
   title: "Connect Bluetooth Device",
   subtitle: "Pair and connect headphones, speakers, keyboards…",
   icon: "dot.radiowaves.left.and.right",
   keywords: ["bluetooth", "pair", "headphones", "airpods", "speaker", "keyboard", "mouse", "audio"],
-  run: Effect.gen(function*() {
-    const bin = yield* find(BLUEUTIL)
-    yield* bin ? browse(bin) : missing(browse)
-  })
+  run: browse
 })
 
 export const reconnect = Spell.make({
@@ -532,10 +577,6 @@ export const reconnect = Spell.make({
   subtitle: "Connect the device you used last",
   icon: "arrow.triangle.2.circlepath",
   keywords: ["bluetooth", "reconnect", "headphones", "airpods", "speaker", "last", "recent"],
-  run: Effect.gen(function*() {
-    const bin = yield* find(BLUEUTIL)
-    if (!bin) return yield* missing(reconnectLast)
-    yield* Ui.hide
-    yield* reconnectLast(bin)
-  })
+  mode: "no-view",
+  run: reconnectLast
 })
