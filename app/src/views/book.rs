@@ -640,6 +640,7 @@ impl Writing<'_> {
             key,
             r,
             r.and_then(|r| command_of(self.s, r)),
+            r.map(|r| facts(self.s, r)),
             self.v,
             self.look,
         )
@@ -1026,7 +1027,14 @@ fn folio_of(r: Option<&Row>, right: bool) -> String {
     (2 * n + usize::from(right)).to_string()
 }
 
-fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink, look: Look) -> El {
+fn entry_page(
+    key: &str,
+    r: Option<&Row>,
+    command: Option<&WireCommand>,
+    facts: Option<Facts>,
+    v: Ink,
+    look: Look,
+) -> El {
     let page = col()
         .w_full()
         .h_full()
@@ -1110,7 +1118,7 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .gap(11.0)
+        .gap(8.0)
         // Under Reduce Motion no leaf turns, and entries cross-fade; otherwise the leaf has
         // already laid the new one down when it lands, and it swaps in at once.
         .transition(if look.still {
@@ -1139,7 +1147,7 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
             .font(book_face(15.0).lh(21.0))
             .color(v.ink.alpha(0.9))
             .wrap()
-            .max_lines(6)
+            .max_lines(3)
             .selectable(true),
         );
     if let Some(c) = command.filter(|c| !c.keywords.is_empty()) {
@@ -1147,29 +1155,167 @@ fn entry_page(key: &str, r: Option<&Row>, command: Option<&WireCommand>, v: Ink,
             text(format!("Also called {}.", c.keywords.join(", ")))
                 .font(italic(13.0).lh(18.0))
                 .color(v.ink.alpha(0.6))
-                .wrap()
-                .max_lines(2),
+                .truncate(),
         );
     }
-    if state == RowState::Dormant {
-        entry = entry.child(spacer()).child(
-            row()
-                .gap(6.0)
-                .center_y()
-                .child(icons::view(
-                    &Icon::Symbol("sparkles".into()),
-                    12.0,
-                    v.rubric.alpha(0.8),
-                    look.scale,
-                ))
-                .child(
-                    text("Press ↵ to enable it.")
-                        .font(italic(13.5))
-                        .color(v.rubric.alpha(0.85)),
-                ),
-        );
+    if let Some(facts) = facts {
+        entry = entry.child(spacer()).child(ledger(&facts, state, v));
     }
     page.child(entry).child(folio(&folio_of(Some(r), false), v))
+}
+
+/// What the book records of a spell beside its entry.
+struct Facts {
+    status: Status,
+    /// How many times it has been cast from the bar.
+    cast: i64,
+    /// Where it's written, in the grimoire.
+    file: String,
+    /// Why its file fails to load, if it does.
+    error: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Status {
+    /// Loaded, ready to cast.
+    Enabled,
+    /// A daemon at work, with its item in the menu bar.
+    Running,
+    /// Enabled, but nothing of it is running.
+    Idle,
+    /// Not loaded until enabled.
+    Disabled,
+}
+
+/// The entry (file or directory) a line of the index belongs to.
+fn entry_id(r: &Row) -> &str {
+    let id = r
+        .id
+        .strip_prefix("spell:")
+        .or_else(|| r.id.strip_prefix("entry:"))
+        .unwrap_or(&r.id);
+    id.split(':').next().unwrap_or(id)
+}
+
+fn facts(s: &Cantrip, r: &Row) -> Facts {
+    let entry = entry_id(r);
+    let ours = |id: &str| id == entry || id.split(':').next() == Some(entry);
+    let status = match row_state(r) {
+        RowState::Dormant => Status::Disabled,
+        RowState::Spell => Status::Enabled,
+        RowState::Daemon if s.daemons.keys().any(|d| ours(d)) => Status::Running,
+        RowState::Daemon => Status::Idle,
+    };
+    let file = if s.services.live {
+        let path = crate::config::Config::spell_file(entry);
+        let dir = crate::config::Config::grimoire_directory();
+        path.strip_prefix(&dir)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| entry.to_string())
+    } else {
+        entry.to_string()
+    };
+    let error = s.load_errors.iter().find_map(|e| {
+        let (id, why) = e.split_once(": ")?;
+        ours(id).then(|| why.to_string())
+    });
+    Facts {
+        status,
+        cast: s.usage.get(&r.id).copied().unwrap_or(0),
+        file,
+        error,
+    }
+}
+
+/// The ledger at the foot of an entry: its status, how often it's been cast, its file, and
+/// why it fails, if it does. Labels in rubric italics, values in the book's hand.
+fn ledger(facts: &Facts, state: RowState, v: Ink) -> El {
+    // Verdigris for what's alive, the page's own ink for what sleeps.
+    let alive = srgb(0.20, 0.42, 0.30, 1.0);
+    let (seal, filled, status) = match facts.status {
+        Status::Enabled => (alive, true, "Enabled".to_string()),
+        Status::Running => (alive, true, "Running in the menu bar".to_string()),
+        Status::Idle => (v.ink.alpha(0.5), false, "Enabled, not running".to_string()),
+        Status::Disabled => (v.ink.alpha(0.5), false, "Disabled · ↵ to enable".to_string()),
+    };
+    let (seal, status) = match &facts.error {
+        Some(_) => (v.rubric, "Fails to load".to_string()),
+        None => (seal, status),
+    };
+    let line = |label: &str, value: El| {
+        row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(
+                text(label.to_string())
+                    .font(italic(12.0))
+                    .color(v.rubric.alpha(0.8))
+                    .w(42.0),
+            )
+            .child(value.grow(1.0).min_w(0.0))
+    };
+    let value = |t: String, alpha: f32| {
+        text(t)
+            .font(book_face(13.0))
+            .color(v.ink.alpha(alpha))
+            .truncate()
+    };
+    let dot = el().size(7.0, 7.0).radius(3.5);
+    let dot = if filled || facts.error.is_some() {
+        dot.fill(seal)
+    } else {
+        dot.border(1.0, seal)
+    };
+    let mut ledger = col()
+        .key("ledger")
+        .w_full()
+        .gap(3.0)
+        .child(el().w_full().h(1.0).linear_gradient(
+            FRAC_PI_2,
+            [(0.0, v.ink.alpha(0.3)), (1.0, v.ink.alpha(0.0))],
+        ))
+        .child(
+            line(
+                "Status",
+                row()
+                    .gap(6.0)
+                    .center_y()
+                    .child(dot)
+                    .child(value(status, 0.88).color(if facts.error.is_some() {
+                        v.rubric
+                    } else {
+                        v.ink.alpha(0.88)
+                    })),
+            )
+            .pt(4.0),
+        );
+    if let Some(why) = &facts.error {
+        ledger = ledger.child(line(
+            "",
+            text(why.clone())
+                .font(italic(11.5).lh(15.0))
+                .color(v.rubric.alpha(0.85))
+                .wrap()
+                .max_lines(2),
+        ));
+    }
+    if state == RowState::Spell {
+        let cast = match facts.cast {
+            0 => "Never yet".to_string(),
+            1 => "Once".to_string(),
+            2 => "Twice".to_string(),
+            n => format!("{n} times"),
+        };
+        ledger = ledger.child(line("Cast", value(cast, 0.8)));
+    }
+    ledger.child(line(
+        "Kept in",
+        text(facts.file.clone())
+            .font(TextStyle::new(10.5, 400.0).family(Family::SystemMono))
+            .color(v.ink.alpha(0.6))
+            .truncate(),
+    ))
 }
 
 /// The incantation: the spell's code as its file has it, copied out in a scribe's hand.
@@ -1407,4 +1553,56 @@ fn leaf(i: usize, kind: Kind, u: f32, tex: &paper::Textures, landing: &rune::Pix
         .pin(Some(0.0), Some(0.0), None, None)
         .size(BOOK_W, BOOK_H)
         .child(sheet.child(light))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::WireEntry;
+    use crate::services::Services;
+
+    fn book() -> Cantrip {
+        let mut s = Cantrip::new(Services::default());
+        crate::fixtures::root(&mut s);
+        let entry = |id: &str, enabled: bool| WireEntry {
+            id: id.into(),
+            title: id.into(),
+            enabled,
+            summary: None,
+        };
+        // An enabled daemon with its item up (the root's Insomnia), one without, and a spell
+        // whose file fails.
+        s.entries = vec![
+            entry("insomnia", true),
+            entry("clock", true),
+            entry("ghost", false),
+        ];
+        s.load_errors = vec!["hello.ts: Cannot find module 'nope'".into()];
+        s.open_book();
+        s.changed();
+        s
+    }
+
+    fn status_of(s: &Cantrip, title: &str) -> (Status, Option<String>, i64) {
+        let rows = s.rows();
+        let r = rows
+            .iter()
+            .find(|r| r.title == title)
+            .unwrap_or_else(|| panic!("no line {title}"));
+        let f = facts(s, r);
+        (f.status, f.error, f.cast)
+    }
+
+    #[test]
+    fn each_entry_records_whether_it_is_alive() {
+        let s = book();
+        assert!(status_of(&s, "insomnia").0 == Status::Running, "its item is in the menu bar");
+        assert!(status_of(&s, "clock").0 == Status::Idle);
+        assert!(status_of(&s, "ghost").0 == Status::Disabled);
+        let (status, error, cast) = status_of(&s, "Hello");
+        assert!(status == Status::Enabled);
+        assert_eq!(error.as_deref(), Some("Cannot find module 'nope'"), "and why it fails");
+        assert_eq!(cast, 3, "as often as it was cast");
+        assert_eq!(status_of(&s, "Git Branches").1, None);
+    }
 }
