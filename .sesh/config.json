@@ -1,4 +1,4 @@
 {
-  "setup": "mise trust && mise install && mise exec -- bun install --cwd runtime --frozen-lockfile",
+  "setup": "mise trust && mise install",
   "ports": 0
 }
