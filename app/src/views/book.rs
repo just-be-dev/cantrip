@@ -132,7 +132,7 @@ impl Book {
                 None => 0.0,
             }
         };
-        let px = (ILLUMINATION * look.scale).round() as u32;
+        let px = (ILLUMINATION * initial::SPREAD * look.scale).round() as u32;
         Some(
             self.illuminations
                 .borrow_mut()
@@ -157,7 +157,7 @@ impl Book {
             })
             .collect();
         wants.sort_by_key(|w| w.0);
-        let px = (ILLUMINATION * look.scale).round() as u32;
+        let px = (ILLUMINATION * initial::SPREAD * look.scale).round() as u32;
         self.illuminations.borrow_mut().prepare(
             wants.into_iter().map(|(_, id, c)| (id, c)),
             v.initial,
@@ -1202,8 +1202,16 @@ fn entry_page(
     // An illuminated initial (`initial`), or for a title that doesn't start with a letter, a
     // gilt frame round a rubric field with it in leaf.
     let illumination = match initial_pixels {
+        // Its penwork spills into the margin round it, taking no room.
         Some(p) => el()
-            .size(ILLUMINATION, ILLUMINATION)
+            .size(
+                ILLUMINATION * initial::SPREAD,
+                ILLUMINATION * initial::SPREAD,
+            )
+            .ml(-ILLUMINATION * (initial::SPREAD - 1.0) / 2.0)
+            .mr(-ILLUMINATION * (initial::SPREAD - 1.0) / 2.0)
+            .mt(-ILLUMINATION * (initial::SPREAD - 1.0) / 2.0)
+            .mb(-ILLUMINATION * (initial::SPREAD - 1.0) / 2.0)
             .pixels(&p)
             .a11y_hidden(),
         None => plain_initial(&initial, v),

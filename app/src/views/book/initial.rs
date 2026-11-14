@@ -1,6 +1,7 @@
-//! Illuminated initials: a capital in its frame on a ground of ink, and around it a figure
-//! inscribed stroke by stroke. One kind to each theme (`Kind`), and each spell's drawn its own
-//! way from its id, so every page is a little different and always the same.
+//! Illuminated initials: a capital on a ground of ink, a figure round it inscribed stroke by
+//! stroke, and a hand-ruled frame with penwork spilling out round it. One kind to each theme
+//! (`Kind`), and each spell's drawn its own way from its id, so every page is a little
+//! different and always the same.
 //!
 //! The capitals' outlines, and the way the inks are printed into the page (ragged edges,
 //! mottled density, burnished gold), come from initialis (github.com/azlen/initialis, MIT, by
@@ -20,8 +21,20 @@ use tiny_skia::{FillRule, LineCap, LineJoin, Mask, Path, PathBuilder, Stroke, Tr
 use caps::{Face, caps};
 use geom::{Box2, Noise, P, Rng, circle_poly, hash, offset_polygon};
 
-/// The initial's own units: it's 1000 across.
+/// The initial's own units: its frame is 1000 across.
 const W: f32 = 1000.0;
+/// The margin round the frame that the flourishes spill into, in the same units.
+const PAD: f32 = 180.0;
+/// The picture painted: the frame and its margin.
+const SPAN: f32 = W + 2.0 * PAD;
+/// How much bigger the picture is than the frame.
+pub const SPREAD: f32 = SPAN / W;
+
+/// From the initial's units to a picture `n` pixels square.
+fn view(n: u32) -> Transform {
+    let k = n as f32 / SPAN;
+    Transform::from_row(k, 0.0, 0.0, k, PAD * k, PAD * k)
+}
 
 /// The inks an initial is printed in, as straight sRGB.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -177,6 +190,9 @@ enum Shape {
     Fill(Vec<P>),
     /// A crescent: a disc (x, y, r) less one beside it, offset by (dx, dy) and `k` its size.
     Crescent([f32; 3], P, f32),
+    /// A pen stroke that swells and thins: a line with a width at each of its points, drawn
+    /// along its length.
+    Taper(Vec<P>, Vec<f32>),
 }
 
 impl Mark {
@@ -383,6 +399,8 @@ pub struct Scene {
     field: Vec<P>,
     rules: Vec<Rule>,
     marks: Vec<Mark>,
+    /// Penwork round the frame, out in the margin.
+    flourish: Vec<Mark>,
     grain: Mutex<HashMap<u32, Arc<Grain>>>,
     layers: Mutex<HashMap<u32, Arc<Layers>>>,
 }
@@ -457,6 +475,12 @@ impl Scene {
         inset += st.w2;
         let field = offset_polygon(&base, inset);
         let fb = Box2::of([&field]);
+        // Ruled by hand: every line of the frame wavers a little, all together.
+        let hand = Noise::new(seed ^ 0x7a11);
+        let field = wobble(&field, &hand);
+        for rule in &mut rules {
+            rule.pts = wobble(&rule.pts, &hand);
+        }
 
         // The letter, centred in the field.
         let face = caps(st.face);
@@ -507,6 +531,7 @@ impl Scene {
             Kind::Seal => seal(fb, &room, &mut r),
             Kind::Chart => chart(fb, &room, &mut r),
         };
+        let flourish = flourishes(m, &mut Rng::new(seed ^ 0xf10e));
         Scene {
             style: st,
             seed,
@@ -514,6 +539,7 @@ impl Scene {
             field,
             rules,
             marks,
+            flourish,
             grain: Mutex::new(HashMap::new()),
             layers: Mutex::new(HashMap::new()),
         }
@@ -527,65 +553,14 @@ impl Scene {
         let layers = self.layers(n);
         let mut c = Canvas::new(n);
         c.cov.clone_from(&layers.under);
-        let tf = Transform::from_scale(n as f32 / W, n as f32 / W);
-        let min_line = 1.1 * W / n as f32;
+        let tf = view(n);
+        let min_line = 1.1 * SPAN / n as f32;
 
-        // The figure as far as it's drawn, a run of marks of one ink at a time.
-        let mut i = 0;
-        while i < self.marks.len() {
-            let slot = self.marks[i].slot;
-            let mut m = c.blank();
-            let mut any = false;
-            while i < self.marks.len() && self.marks[i].slot == slot {
-                let mark = &self.marks[i];
-                i += 1;
-                let u = mark.progress(t);
-                if u <= 0.0 {
-                    continue;
-                }
-                any = true;
-                match &mark.shape {
-                    Shape::Line(pts, w) => {
-                        if let Some(p) = path_of(&[partial(pts, u)], false)
-                            .and_then(|p| stroked(&p, w.max(min_line)))
-                        {
-                            m.fill_path(&p, FillRule::Winding, true, tf);
-                        }
-                    }
-                    Shape::Dot([x, y], rad) => {
-                        // Swells a little past its size, and settles.
-                        let s = 1.0 - (1.0 - u).powi(3) + 0.25 * (u * PI).sin();
-                        let mut pb = PathBuilder::new();
-                        pb.push_circle(*x, *y, (rad * s).max(min_line / 2.0));
-                        if let Some(p) = pb.finish() {
-                            m.fill_path(&p, FillRule::Winding, true, tf);
-                        }
-                    }
-                    Shape::Fill(poly) => {
-                        let mut f = c.fill(path_of(std::slice::from_ref(poly), true), tf);
-                        fade(&mut f, u);
-                        union(&mut m, &f);
-                    }
-                    Shape::Crescent([x, y, rad], [dx, dy], k) => {
-                        let disc = |x: f32, y: f32, r: f32| {
-                            let mut pb = PathBuilder::new();
-                            pb.push_circle(x, y, r);
-                            c.fill(pb.finish(), tf)
-                        };
-                        let mut f = disc(*x, *y, *rad);
-                        subtract(&mut f, &disc(x + dx, y + dy, rad * k));
-                        fade(&mut f, u);
-                        union(&mut m, &f);
-                    }
-                }
-            }
-            if any {
-                intersect(&mut m, &layers.field);
-                c.put(&m, slot);
-            }
-        }
-
+        // The figure as far as it's drawn, kept inside the frame.
+        draw(&mut c, &self.marks, t, tf, min_line, Some(&layers.field));
         c.apply(&layers.over);
+        // And the penwork round it, over the frame.
+        draw(&mut c, &self.flourish, t, tf, min_line, None);
         let grain = self.grain(n);
         c.print(&self.style, &grain, inks, px)
     }
@@ -598,8 +573,8 @@ impl Scene {
         }
         let mut c = Canvas::new(n);
         let st = &self.style;
-        let tf = Transform::from_scale(n as f32 / W, n as f32 / W);
-        let min_line = 1.1 * W / n as f32;
+        let tf = view(n);
+        let min_line = 1.1 * SPAN / n as f32;
 
         let field = c.fill(path_of(std::slice::from_ref(&self.field), true), tf);
         c.put(&field, st.ground);
@@ -646,6 +621,422 @@ impl Scene {
             .or_insert_with(|| Arc::new(Grain::new(n, self.seed, &self.style)))
             .clone()
     }
+}
+
+/// Draws `marks` as far as they're drawn at `t`, a run of marks of one ink at a time, inside
+/// `clip` if there is one.
+fn draw(c: &mut Canvas, marks: &[Mark], t: f32, tf: Transform, min_line: f32, clip: Option<&Mask>) {
+    let mut i = 0;
+    while i < marks.len() {
+        let slot = marks[i].slot;
+        let mut m = c.blank();
+        let mut any = false;
+        while i < marks.len() && marks[i].slot == slot {
+            let mark = &marks[i];
+            i += 1;
+            let u = mark.progress(t);
+            if u <= 0.0 {
+                continue;
+            }
+            any = true;
+            match &mark.shape {
+                Shape::Line(pts, w) => {
+                    if let Some(p) = path_of(&[partial(pts, u)], false)
+                        .and_then(|p| stroked(&p, w.max(min_line)))
+                    {
+                        m.fill_path(&p, FillRule::Winding, true, tf);
+                    }
+                }
+                Shape::Dot([x, y], rad) => {
+                    // Swells a little past its size, and settles.
+                    let s = 1.0 - (1.0 - u).powi(3) + 0.25 * (u * PI).sin();
+                    let mut pb = PathBuilder::new();
+                    pb.push_circle(*x, *y, (rad * s).max(min_line / 2.0));
+                    if let Some(p) = pb.finish() {
+                        m.fill_path(&p, FillRule::Winding, true, tf);
+                    }
+                }
+                Shape::Fill(poly) => {
+                    let mut f = c.fill(path_of(std::slice::from_ref(poly), true), tf);
+                    fade(&mut f, u);
+                    union(&mut m, &f);
+                }
+                Shape::Taper(pts, ws) => {
+                    let (pts, ws) = partial_widths(pts, ws, u);
+                    let poly = taper(&pts, &ws, min_line);
+                    let mut f = c.fill(path_of(&[poly], true), tf);
+                    // Round where the pen set down and where it is.
+                    let mut pb = PathBuilder::new();
+                    for (p, w) in [(pts[0], ws[0]), (pts[pts.len() - 1], ws[ws.len() - 1])] {
+                        pb.push_circle(p[0], p[1], (w / 2.0).max(min_line / 2.0));
+                    }
+                    union(&mut f, &c.fill(pb.finish(), tf));
+                    union(&mut m, &f);
+                }
+                Shape::Crescent([x, y, rad], [dx, dy], k) => {
+                    let disc = |x: f32, y: f32, r: f32| {
+                        let mut pb = PathBuilder::new();
+                        pb.push_circle(x, y, r);
+                        c.fill(pb.finish(), tf)
+                    };
+                    let mut f = disc(*x, *y, *rad);
+                    subtract(&mut f, &disc(x + dx, y + dy, rad * k));
+                    fade(&mut f, u);
+                    union(&mut m, &f);
+                }
+            }
+        }
+        if any {
+            if let Some(clip) = clip {
+                intersect(&mut m, clip);
+            }
+            c.put(&m, slot);
+        }
+    }
+}
+
+/// `poly` (closed) as a hand ruled it: every 10 units, moved off the line by a little, the same
+/// at the same place for every line of the frame.
+fn wobble(poly: &[P], hand: &Noise) -> Vec<P> {
+    let mut dense = Vec::new();
+    for (i, &a) in poly.iter().enumerate() {
+        let b = poly[(i + 1) % poly.len()];
+        let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / 10.0).ceil().max(1.0) as usize;
+        for k in 0..steps {
+            let t = k as f32 / steps as f32;
+            dense.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+        }
+    }
+    let n = dense.len();
+    (0..n)
+        .map(|i| {
+            let (p, q) = (dense[(i + n - 1) % n], dense[(i + 1) % n]);
+            let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+            let l = dx.hypot(dy).max(1e-3);
+            let [x, y] = dense[i];
+            let d = 5.0 * hand.at(x * 0.005, y * 0.005) + 1.6 * hand.at(x * 0.03 + 7.0, y * 0.03);
+            [x - dy / l * d, y + dx / l * d]
+        })
+        .collect()
+}
+
+/// The start of a stroke with widths `ws`, `u` of its length.
+fn partial_widths(pts: &[P], ws: &[f32], u: f32) -> (Vec<P>, Vec<f32>) {
+    if u >= 1.0 || pts.len() < 2 {
+        return (pts.to_vec(), ws.to_vec());
+    }
+    let len = |a: P, b: P| (b[0] - a[0]).hypot(b[1] - a[1]);
+    let total: f32 = pts.windows(2).map(|w| len(w[0], w[1])).sum();
+    let mut left = total * u;
+    let (mut out, mut ow) = (vec![pts[0]], vec![ws[0]]);
+    for i in 1..pts.len() {
+        let d = len(pts[i - 1], pts[i]);
+        if d >= left {
+            let k = if d > 0.0 { left / d } else { 0.0 };
+            let (a, b) = (pts[i - 1], pts[i]);
+            out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]);
+            ow.push(ws[i - 1] + (ws[i] - ws[i - 1]) * k);
+            return (out, ow);
+        }
+        out.push(pts[i]);
+        ow.push(ws[i]);
+        left -= d;
+    }
+    (out, ow)
+}
+
+/// The outline of a stroke along `pts`, `ws` wide at each.
+fn taper(pts: &[P], ws: &[f32], min: f32) -> Vec<P> {
+    let n = pts.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let mut left = Vec::with_capacity(n);
+    let mut right = Vec::with_capacity(n);
+    for i in 0..n {
+        let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(n - 1)]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let l = dx.hypot(dy).max(1e-3);
+        let h = ws[i].max(min) / 2.0;
+        let [x, y] = pts[i];
+        left.push([x - dy / l * h, y + dx / l * h]);
+        right.push([x + dy / l * h, y - dx / l * h]);
+    }
+    right.reverse();
+    left.extend(right);
+    left
+}
+
+/// A pen line from `p`, setting off at `heading` and turning by `turn` over its `len`, most of
+/// it at the end, so it rolls up into a scroll.
+fn curl(p: P, heading: f32, len: f32, turn: f32) -> Vec<P> {
+    let steps = (len / 3.0).ceil().max(2.0) as usize;
+    let ds = len / steps as f32;
+    let mut pts = vec![p];
+    let [mut x, mut y] = p;
+    for i in 1..=steps {
+        let s = (i as f32 - 0.5) / steps as f32;
+        let a = heading + turn * s.powf(2.4);
+        x += a.cos() * ds;
+        y += a.sin() * ds;
+        pts.push([x, y]);
+    }
+    pts
+}
+
+/// A leaf from `b` along `dir`, `len` long and `w` across at its widest, pointed at both ends.
+fn teardrop(b: P, dir: f32, len: f32, w: f32) -> Vec<P> {
+    let (c, s) = (dir.cos(), dir.sin());
+    let side = |k: f32| -> Vec<P> {
+        (0..=20)
+            .map(|i| {
+                let t = i as f32 / 20.0;
+                let h = w / 2.0 * (PI * t).sin().powf(0.9) * (1.0 - 0.5 * t) * k;
+                [b[0] + c * len * t - s * h, b[1] + s * len * t + c * h]
+            })
+            .collect()
+    };
+    let mut pts = side(1.0);
+    let mut back = side(-1.0);
+    back.reverse();
+    pts.extend(back);
+    pts
+}
+
+impl Mark {
+    /// A pen stroke along `pts`, from `w0` wide to `w1`.
+    fn pen(pts: Vec<P>, w0: f32, w1: f32, slot: Slot, at: f32, dur: f32) -> Mark {
+        let n = pts.len().max(2) - 1;
+        let ws = (0..pts.len())
+            .map(|i| w0 + (w1 - w0) * i as f32 / n as f32)
+            .collect();
+        Mark {
+            shape: Shape::Taper(pts, ws),
+            slot,
+            at,
+            dur,
+        }
+    }
+
+    /// The same mark with every point moved by `f`.
+    fn mapped(&self, f: &impl Fn(P) -> P) -> Mark {
+        let all = |pts: &Vec<P>| pts.iter().map(|&p| f(p)).collect::<Vec<P>>();
+        let shape = match &self.shape {
+            Shape::Line(pts, w) => Shape::Line(all(pts), *w),
+            Shape::Dot(p, r) => Shape::Dot(f(*p), *r),
+            Shape::Fill(pts) => Shape::Fill(all(pts)),
+            Shape::Taper(pts, ws) => Shape::Taper(all(pts), ws.clone()),
+            Shape::Crescent([x, y, r], [dx, dy], k) => {
+                let c = f([*x, *y]);
+                let o = f([x + dx, y + dy]);
+                Shape::Crescent([c[0], c[1], *r], [o[0] - c[0], o[1] - c[1]], *k)
+            }
+        };
+        Mark {
+            shape,
+            slot: self.slot,
+            at: self.at,
+            dur: self.dur,
+        }
+    }
+}
+
+/// Penwork round a frame `m` in from the edge of the initial, as the hand that ruled it drew it:
+/// the same flourish at each corner, out in the margin, in rubric with gilt at its ends, and
+/// sometimes another at the middle of each side. Each spell's is chosen and shaped its own way.
+fn flourishes(m: f32, r: &mut Rng) -> Vec<Mark> {
+    use std::f32::consts::FRAC_PI_4;
+    // At a corner, `u` and `v` run out from it, away from the frame; the flourish is drawn
+    // for one side of the corner's diagonal and mirrored across it.
+    let mut corner: Vec<Mark> = Vec::new();
+    let pen = Slot::Rubric;
+    match r.pick(&[0, 0, 1, 1, 2, 3]) {
+        0 => {
+            // Scrolls: a stem out along the diagonal, rolling up either way at its end.
+            let l = r.range(70.0, 90.0);
+            let stem = curl([6.0, 6.0], FRAC_PI_4, l, 0.0);
+            let e = *stem.last().unwrap();
+            corner.push(Mark::pen(stem, 22.0, 14.0, pen, 0.0, 0.3));
+            let (len, turn) = (r.range(115.0, 140.0), r.range(4.8, 5.6));
+            let roll = curl(e, FRAC_PI_4 - r.range(0.9, 1.2), len, turn);
+            let end = *roll.last().unwrap();
+            corner.push(Mark::pen(roll, 16.0, 6.0, pen, 0.3, 0.45));
+            corner.push(Mark::dot(end, 12.0, Slot::Gilt, 0.75, 0.15));
+            corner.push(Mark::dot(
+                [e[0] + 34.0, e[1] + 34.0],
+                14.0,
+                Slot::Gilt,
+                0.6,
+                0.15,
+            ));
+        }
+        1 => {
+            // Filigree: a tendril along the frame's edge, waving, with sprigs off it and a
+            // scroll where it ends.
+            let (v0, len) = (r.range(44.0, 52.0), r.range(280.0, 340.0));
+            let (amp, wave) = (r.range(9.0, 14.0), r.range(80.0, 110.0));
+            let steps = (len / 4.0) as usize;
+            let tendril: Vec<P> = (0..=steps)
+                .map(|i| {
+                    let s = len * i as f32 / steps as f32;
+                    let env = (s / 60.0).min(1.0);
+                    [v0 - s, v0 + amp * env * (s / wave * TAU).sin()]
+                })
+                .collect();
+            let end = *tendril.last().unwrap();
+            corner.push(Mark::pen(tendril, 17.0, 8.0, pen, 0.0, 0.6));
+            let roll = curl(end, PI, 85.0, -r.range(4.5, 5.5));
+            let tip = *roll.last().unwrap();
+            corner.push(Mark::pen(roll, 8.0, 5.0, pen, 0.55, 0.2));
+            corner.push(Mark::dot(tip, 10.0, Slot::Gilt, 0.75, 0.12));
+            for k in 1..=r.pick(&[2, 3]) {
+                let s = len * (k as f32 / 3.4 + 0.08);
+                let base = [v0 - s, v0 + amp * (s / wave * TAU).sin()];
+                let sprig = curl(base, PI / 2.0 + 0.5, r.range(50.0, 64.0), r.range(3.2, 4.2));
+                let tip = *sprig.last().unwrap();
+                corner.push(Mark::pen(sprig, 10.0, 5.0, pen, 0.2 + 0.12 * k as f32, 0.2));
+                corner.push(Mark::dot(tip, 9.0, Slot::Gilt, 0.4 + 0.12 * k as f32, 0.1));
+            }
+            // Its root at the corner, shared with its mirror.
+            corner.push(Mark::dot([v0, v0], 16.0, Slot::Gilt, 0.0, 0.15));
+        }
+        2 => {
+            // The rules run on past the corner, the pen lifting off, and a boss where they
+            // cross.
+            let l = r.range(80.0, 110.0);
+            corner.push(Mark::pen(
+                vec![[-20.0, -9.0], [l, -9.0]],
+                18.0,
+                5.0,
+                Slot::Gilt,
+                0.0,
+                0.3,
+            ));
+            corner.push(Mark::pen(
+                vec![[-20.0, -31.0], [l * 0.7, -31.0]],
+                10.0,
+                4.0,
+                Slot::Gilt,
+                0.1,
+                0.3,
+            ));
+            corner.push(Mark::dot([-20.0, -20.0], 36.0, Slot::Gilt, 0.4, 0.2));
+            corner.push(Mark::line(
+                circle_poly(-20.0, -20.0, 52.0),
+                10.0,
+                pen,
+                0.5,
+                0.3,
+            ));
+            let d = l * 0.75;
+            corner.push(Mark::dot([d, d], 14.0, Slot::Gilt, 0.7, 0.15));
+            corner.push(Mark::dot([d + 28.0, d - 6.0], 8.0, pen, 0.8, 0.1));
+        }
+        _ => {
+            // A leaf out along the diagonal, with a scroll either side.
+            let len = r.range(125.0, 150.0);
+            corner.push(Mark {
+                shape: Shape::Fill(teardrop([8.0, 8.0], FRAC_PI_4, len, 50.0)),
+                slot: pen,
+                at: 0.15,
+                dur: 0.3,
+            });
+            let k = len / std::f32::consts::SQRT_2;
+            corner.push(Mark::pen(
+                vec![[14.0, 14.0], [8.0 + k * 0.7, 8.0 + k * 0.7]],
+                9.0,
+                3.0,
+                Slot::Gilt,
+                0.45,
+                0.2,
+            ));
+            let roll = curl([40.0, 4.0], 0.15, r.range(90.0, 110.0), r.range(4.2, 5.0));
+            let tip = *roll.last().unwrap();
+            corner.push(Mark::pen(roll, 15.0, 6.0, pen, 0.0, 0.45));
+            corner.push(Mark::dot(tip, 11.0, Slot::Gilt, 0.5, 0.15));
+        }
+    }
+    let swap = |[u, v]: P| [v, u];
+    let mirrored: Vec<Mark> = corner.iter().map(|k| k.mapped(&swap)).collect();
+    corner.extend(mirrored);
+
+    // At the middle of each side, `t` runs along it and `n` out from it.
+    let mut side: Vec<Mark> = Vec::new();
+    match r.pick(&[0, 1, 2, 3]) {
+        1 => {
+            side.push(Mark {
+                shape: Shape::Fill(teardrop([0.0, 6.0], PI / 2.0, r.range(75.0, 95.0), 38.0)),
+                slot: pen,
+                at: 0.1,
+                dur: 0.3,
+            });
+            side.push(Mark::dot([0.0, 118.0], 13.0, Slot::Gilt, 0.5, 0.15));
+            side.push(Mark::dot([30.0, 18.0], 9.0, Slot::Gilt, 0.6, 0.1));
+            side.push(Mark::dot([-30.0, 18.0], 9.0, Slot::Gilt, 0.6, 0.1));
+        }
+        2 => {
+            let (len, turn) = (r.range(95.0, 115.0), r.range(4.3, 5.0));
+            for k in [1.0f32, -1.0] {
+                let roll = curl([0.0, 6.0], PI / 2.0, len, turn * k);
+                let tip = *roll.last().unwrap();
+                side.push(Mark::pen(roll, 16.0, 6.0, pen, 0.0, 0.45));
+                side.push(Mark::dot(tip, 11.0, Slot::Gilt, 0.5, 0.15));
+            }
+            side.push(Mark::dot([0.0, 30.0], 11.0, Slot::Gilt, 0.4, 0.12));
+        }
+        3 => {
+            for (k, p) in [[0.0, 26.0], [-21.0, 60.0], [21.0, 60.0]]
+                .into_iter()
+                .enumerate()
+            {
+                side.push(Mark::dot(p, 12.0, Slot::Gilt, 0.2 * k as f32, 0.15));
+            }
+        }
+        _ => {}
+    }
+
+    let mut out = Vec::new();
+    let corners = [
+        (m, m, -1.0, -1.0),
+        (W - m, m, 1.0, -1.0),
+        (W - m, W - m, 1.0, 1.0),
+        (m, W - m, -1.0, 1.0),
+    ];
+    for (k, &(cx, cy, sx, sy)) in corners.iter().enumerate() {
+        let place = |[u, v]: P| [cx + sx * u, cy + sy * v];
+        out.extend(corner.iter().map(|mk| {
+            let mut mk = mk.mapped(&place);
+            mk.at = 0.3 + 0.08 * k as f32 + mk.at * 0.35;
+            mk.dur *= 0.6;
+            mk
+        }));
+    }
+    let mid = W / 2.0;
+    let sides: [(P, P); 4] = [
+        ([mid, m], [0.0, -1.0]),
+        ([W - m, mid], [1.0, 0.0]),
+        ([mid, W - m], [0.0, 1.0]),
+        ([m, mid], [-1.0, 0.0]),
+    ];
+    for (k, &(o, nrm)) in sides.iter().enumerate() {
+        // Along the side, clockwise.
+        let along = [-nrm[1], nrm[0]];
+        let place = |[t, n]: P| {
+            [
+                o[0] + along[0] * t + nrm[0] * n,
+                o[1] + along[1] * t + nrm[1] * n,
+            ]
+        };
+        out.extend(side.iter().map(|mk| {
+            let mut mk = mk.mapped(&place);
+            mk.at = 0.55 + 0.06 * k as f32 + mk.at * 0.3;
+            mk.dur *= 0.6;
+            mk
+        }));
+    }
+    // The vermilion first, the gold over it.
+    out.sort_by_key(|mk| mk.slot == Slot::Gilt);
+    out
 }
 
 /// Scales a mask's coverage by `u`.
