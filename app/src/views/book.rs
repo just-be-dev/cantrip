@@ -58,10 +58,9 @@ const TURN: f64 = 0.42;
 const COVER: f64 = 0.62;
 /// At most this many leaves in the air: holding an arrow riffles through the pages.
 const MAX_LEAVES: usize = 3;
-/// How long an initial takes to grow in, and how long after its page has settled it starts
-/// (once the ink has seeped in).
+/// How long an initial takes to be inscribed. It starts as the leaf bringing its page begins
+/// to turn, or as the cover lands and the writing seeps in.
 const GROW: f64 = 1.1;
-const GROW_AFTER: f64 = 0.3;
 /// How long the writing takes to seep into the pages once the cover has landed.
 const INK_IN: f64 = 0.6;
 /// The illuminated initial, square.
@@ -85,8 +84,8 @@ pub struct Book {
     sources: std::cell::RefCell<std::collections::HashMap<String, Option<std::rc::Rc<str>>>>,
     /// The illuminated initials, built and painted so far.
     illuminations: std::rc::Rc<std::cell::RefCell<initial::Illuminations>>,
-    /// When each entry's initial began growing in (frame-clock seconds), by line id: once the
-    /// page it's on has settled, the first time.
+    /// When each entry's initial began growing in (frame-clock seconds), by line id: the first
+    /// time a leaf turned to it, or its page lay open.
     grown: std::cell::RefCell<std::collections::HashMap<String, f64>>,
     /// Every initial has already grown in: the book was read through long ago.
     pub read_through: bool,
@@ -113,8 +112,8 @@ impl Book {
             let began = match grown.get(&r.id) {
                 Some(&began) => Some(began),
                 None if settled => {
-                    grown.insert(r.id.clone(), now + GROW_AFTER);
-                    Some(now + GROW_AFTER)
+                    grown.insert(r.id.clone(), now);
+                    Some(now)
                 }
                 None => None,
             };
@@ -138,6 +137,26 @@ impl Book {
                 .borrow_mut()
                 .pixels(&r.id, letter, v.initial, t, px, &v.print),
         )
+    }
+
+    /// Starts the initial of each page a leaf in the air is turning to, as it begins to turn,
+    /// and under the cover, as it lands: so it's being inscribed while the leaf is still in the
+    /// air, and the leaf and the page it lands on show it just as far along.
+    fn start_initials(&self, rows: &[Row], selection: usize) {
+        if self.read_through {
+            return;
+        }
+        let mut grown = self.grown.borrow_mut();
+        for turn in &self.leaves.turns {
+            let Some(began) = turn.began else { continue };
+            let (line, at) = match turn.kind {
+                Kind::Leaf { forward, lo, hi } => (if forward { hi } else { lo }, began),
+                Kind::Cover => (selection, began + COVER),
+            };
+            if let Some(r) = rows.get(line) {
+                grown.entry(r.id.clone()).or_insert(at);
+            }
+        }
     }
 
     /// When the initial of line `id` began growing in, if it has.
@@ -822,6 +841,7 @@ pub(super) fn view(s: &Cantrip, look: Look) -> El {
         .filter(|(_, hi)| *hi < rows.len())
         .unwrap_or((s.selection(), s.selection()));
     book.prepare_initials(&rows, s.selection(), v, look);
+    book.start_initials(&rows, s.selection());
     let left_picture = |line: usize| &tex.pages_left[variant_left(rows.get(line))];
     let right_picture = |line: usize| &tex.pages_right[variant_right(rows.get(line))];
     // While the cover swings over, the left side is bare desk; the cover lands as it.

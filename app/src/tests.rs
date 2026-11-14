@@ -904,54 +904,42 @@ fn moving_through_the_book_turns_leaves_on_the_frame_clock() {
 }
 
 #[test]
-fn an_initial_grows_in_once_its_page_has_settled() {
+fn an_initial_is_inscribed_as_the_page_bringing_it_turns() {
     let mut rt = runtime(fixtures::root);
     type_text(&mut rt, "open grimoire");
     press(&mut rt, Key::Enter);
     let first = rt.state.rows()[0].id.clone();
     let second = rt.state.rows()[1].id.clone();
-    let grown =
-        |rt: &rune::Runtime<Cantrip>, id: &str| rt.state.book.as_ref().and_then(|b| b.grown_at(id));
-    // Under the cover, nothing grows.
+    let grown = |rt: &rune::Runtime<Cantrip>, id: &str| {
+        rt.state.book.as_ref().and_then(|b| b.grown_at(id))
+    };
+    // The first page's initial starts as the cover lands and the writing seeps in.
     rt.update(|s, tx| {
         s.animate_book(10.0, tx);
         s.animate_book(10.3, tx);
     });
     settle(&mut rt);
-    assert_eq!(
-        grown(&rt, &first),
-        None,
-        "not while the cover is in the air"
-    );
-    // Landed: its initial starts growing once the ink has seeped in, and frames keep coming
-    // until it has.
+    let began = grown(&rt, &first).expect("set to begin");
+    assert!(began > 10.5 && began < 10.7, "as the cover lands: {began}");
     rt.update(|s, tx| {
         s.animate_book(10.7, tx);
         s.animate_book(10.75, tx);
     });
     settle(&mut rt);
-    let began = grown(&rt, &first).expect("growing");
-    assert!(began > 10.7, "a moment after it settles");
-    rt.update(|s, tx| assert!(s.animate_book(began + 0.5, tx), "still growing"));
+    rt.update(|s, tx| assert!(s.animate_book(began + 0.5, tx), "still being inscribed"));
     settle(&mut rt);
     rt.update(|s, tx| {
         s.animate_book(began + 2.0, tx);
-        assert!(!s.animate_book(began + 2.1, tx), "grown, and still");
+        assert!(!s.animate_book(began + 2.1, tx), "inscribed, and still");
     });
-    // The next spell's grows once the leaf has landed on it, not while it's in the air.
+    // The next spell's starts as the leaf bringing it begins to turn, not once it's landed.
     press(&mut rt, Key::Down);
     rt.update(|s, tx| {
         s.animate_book(20.0, tx);
-        s.animate_book(20.2, tx);
+        s.animate_book(20.05, tx);
     });
     settle(&mut rt);
-    assert_eq!(grown(&rt, &second), None);
-    rt.update(|s, tx| {
-        s.animate_book(20.5, tx);
-        s.animate_book(20.55, tx);
-    });
-    settle(&mut rt);
-    assert!(grown(&rt, &second).is_some());
+    assert_eq!(grown(&rt, &second), Some(20.0));
 }
 
 #[test]
