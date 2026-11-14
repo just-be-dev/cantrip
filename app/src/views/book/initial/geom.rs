@@ -178,4 +178,3 @@ pub fn circle_poly(x: f32, y: f32, r: f32) -> Vec<P> {
         })
         .collect()
 }
-

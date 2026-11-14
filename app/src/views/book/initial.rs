@@ -12,7 +12,7 @@ mod caps;
 mod geom;
 
 use std::collections::HashMap;
-use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 use std::sync::{Arc, Mutex};
 
 use tiny_skia::{FillRule, LineCap, LineJoin, Mask, Path, PathBuilder, Stroke, Transform};
@@ -124,7 +124,7 @@ impl Style {
         match kind {
             Kind::Seal => Style {
                 face: Face::Fraktur,
-                size: 0.6,
+                size: 0.54,
                 letter: Slot::Gilt,
                 halo: 22.0,
                 echo_gap: 34.0,
@@ -377,13 +377,16 @@ fn sigil(r: &mut Rng) -> (Vec<P>, P) {
     (path, start)
 }
 
-/// A four-pointed star, (`x`, `y`), `r` to its points.
-fn sparkle(x: f32, y: f32, r: f32) -> Vec<P> {
-    (0..16)
+/// A star of `n` points (four, six or eight), (`x`, `y`), `r` to its points.
+fn sparkle(x: f32, y: f32, r: f32, n: usize) -> Vec<P> {
+    (0..n * 4)
         .map(|i| {
-            let a = i as f32 * TAU / 16.0 - FRAC_PI_2;
+            let a = i as f32 * TAU / (n * 4) as f32 - FRAC_PI_2;
             let k = match i % 4 {
-                0 => 1.0,
+                0 => {
+                    // With four points, the diagonals are shorter.
+                    if n == 8 && (i / 4) % 2 == 1 { 0.6 } else { 1.0 }
+                }
                 2 => 0.22,
                 _ => 0.3,
             };
@@ -687,102 +690,74 @@ fn fade(m: &mut Mask, u: f32) {
     }
 }
 
-/// The seal's figure: a double ring round the field with runes between, a star drawn through
-/// it in vermilion, gold at the star's points, and a sigil in each corner. Each spell's has its
-/// own star, runes, ticks and sigils.
+/// The seal's figure: rings round the field with a band of runes, a figure of sacred geometry
+/// drawn through it in vermilion, and marks in the corners. Each spell's is put together its own
+/// way: how the rings are edged, what's in the bands, which figure, what marks its points, and
+/// what's in the corners.
 fn seal(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
     let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0);
     let big = fb.w().min(fb.h()) / 2.0;
-    let r_out = big * 0.95;
-    let band = big * r.range(0.17, 0.2);
-    let r_in = r_out - band;
-    let turn = r.range(0.0, TAU);
-    let mut marks = Vec::new();
-
-    // The rings, traced from the top round.
     let start = -FRAC_PI_2 + r.range(-0.4, 0.4);
-    marks.push(Mark::line(
-        arc(cx, cy, r_out, start, TAU),
-        13.0,
-        Slot::Gilt,
-        0.0,
-        0.3,
-    ));
-    marks.push(Mark::line(
-        arc(cx, cy, r_in, start, -TAU),
-        11.0,
-        Slot::Gilt,
-        0.06,
-        0.3,
-    ));
-
-    // The star, {n/k}, each of its loops drawn in one stroke.
-    let (points, step) = r.pick(&[(5, 2), (6, 2), (7, 2), (7, 3), (8, 3), (9, 2), (9, 4)]);
-    let r_star = r_in - 8.0;
-    let a0 = -FRAC_PI_2
-        + if r.chance(0.5) {
-            0.0
-        } else {
-            PI / points as f32
-        };
-    let vertex = |i: usize| {
-        let a = a0 + TAU * i as f32 / points as f32;
-        [cx + a.cos() * r_star, cy + a.sin() * r_star]
+    let mut marks = Vec::new();
+    let ring = |rad: f32, w: f32, slot: Slot, at: f32, dir: f32| {
+        Mark::line(arc(cx, cy, rad, start, TAU * dir), w, slot, at, 0.3)
     };
-    let loops = gcd(points, step);
-    for l in 0..loops {
-        let pts: Vec<P> = (0..=points / loops).map(|j| vertex(l + j * step)).collect();
-        let at = 0.22 + 0.35 * l as f32 / loops as f32;
-        marks.push(Mark::line(pts, 13.0, Slot::Rubric, at, 0.4 / loops as f32));
-    }
-    // And sometimes the circle its inner points touch.
-    if r.chance(0.5) {
-        let ri = r_star * (PI * step as f32 / points as f32).cos();
-        marks.push(Mark::line(
-            arc(cx, cy, ri, turn, TAU),
-            7.0,
-            Slot::Rubric,
-            0.5,
-            0.25,
-        ));
-    }
-    // Ticks inside the inner ring, between the star's points.
-    if r.chance(0.6) {
-        let per = r.pick(&[2, 3, 4]);
-        let count = points * per;
-        for i in 0..count {
-            if i % per == 0 {
-                continue;
+    let polar = |a: f32, rad: f32| [cx + a.cos() * rad, cy + a.sin() * rad];
+
+    // The outer ring, edged one of three ways.
+    let mut r_out = big * 0.95;
+    match r.pick(&[0, 1, 2]) {
+        0 => marks.push(ring(r_out, 13.0, Slot::Gilt, 0.0, 1.0)),
+        1 => {
+            marks.push(ring(r_out, 6.0, Slot::Gilt, 0.0, 1.0));
+            r_out -= 18.0;
+            marks.push(ring(r_out, 12.0, Slot::Gilt, 0.03, -1.0));
+        }
+        _ => {
+            marks.push(ring(r_out, 11.0, Slot::Gilt, 0.0, 1.0));
+            let n = r.pick(&[24, 32, 40]);
+            for i in 0..n {
+                let a = start + TAU * i as f32 / n as f32;
+                marks.push(Mark::dot(
+                    polar(a, r_out),
+                    11.0,
+                    Slot::Gilt,
+                    0.05 + 0.25 * i as f32 / n as f32,
+                    0.06,
+                ));
             }
-            let a = a0 + TAU * i as f32 / count as f32;
-            let (c, s) = (a.cos(), a.sin());
-            let pts = vec![
-                [cx + c * (r_in - 4.0), cy + s * (r_in - 4.0)],
-                [cx + c * (r_in - 30.0), cy + s * (r_in - 30.0)],
-            ];
-            let at = 0.45 + 0.2 * i as f32 / count as f32;
-            marks.push(Mark::line(pts, 8.0, Slot::Gilt, at, 0.06));
+            r_out -= 10.0;
         }
     }
-    // Gold at the star's points.
-    for i in 0..points {
-        let at = 0.55 + 0.12 * i as f32 / points as f32;
-        marks.push(Mark::dot(vertex(i), 15.0, Slot::Gilt, at, 0.12));
-    }
 
-    // The runes between the rings, upright, read clockwise from the top.
+    // The band of runes, read clockwise from the top: plain, parted by bars into words, or
+    // with stops between them.
+    let band = big * r.range(0.16, 0.19);
+    let r_in = r_out - band;
     let mid = (r_out + r_in) / 2.0;
     let h = band * 0.6;
-    let count = ((TAU * mid) / (h * 1.0)).floor() as usize;
+    let count = ((TAU * mid) / h).floor() as usize;
+    let parting = r.pick(&[0, 0, 1, 2]);
+    let word = r.pick(&[4, 5, 6, 7]);
     let mut runes = Vec::new();
     for i in 0..count {
         let a = start + TAU * (i as f32 + 0.5) / count as f32;
         let (o, tg) = ([a.cos(), a.sin()], [-a.sin(), a.cos()]);
         let at = 0.32 + 0.55 * i as f32 / count as f32;
         let p = [cx + o[0] * mid, cy + o[1] * mid];
-        if r.chance(0.14) {
-            // A stop between words.
-            marks.push(Mark::dot(p, 9.0, Slot::Gilt, at, 0.08));
+        let stop = match parting {
+            1 => i % word == 0,
+            2 => i % word == 0 || r.chance(0.08),
+            _ => r.chance(0.14),
+        };
+        if stop {
+            if parting == 1 {
+                // A bar across the band.
+                let pts = vec![polar(a, r_in + 4.0), polar(a, r_out - 4.0)];
+                runes.push(Mark::line(pts, 9.0, Slot::Gilt, at, 0.06));
+            } else {
+                runes.push(Mark::dot(p, 9.0, Slot::Gilt, at, 0.08));
+            }
             continue;
         }
         for stroke in rune(r) {
@@ -798,12 +773,278 @@ fn seal(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
             runes.push(Mark::line(pts, 9.0, Slot::Gilt, at, 0.08));
         }
     }
+    marks.push(ring(r_in, 11.0, Slot::Gilt, 0.06, -1.0));
+
+    // Sometimes a second, narrower band inside: beads, a scale of degrees, a zigzag, or a fine
+    // vermilion double line.
+    let mut r_fig = r_in - 8.0;
+    if r.chance(0.5) {
+        let w = big * 0.08;
+        let (a_, b_) = (r_in - 6.0, r_in - w);
+        match r.pick(&[0, 1, 2, 3]) {
+            0 => {
+                let n = (TAU * (a_ + b_) / 2.0 / 34.0) as usize;
+                for i in 0..n {
+                    let a = start + TAU * i as f32 / n as f32;
+                    marks.push(Mark::dot(
+                        polar(a, (a_ + b_) / 2.0),
+                        7.0,
+                        Slot::Gilt,
+                        0.2 + 0.25 * i as f32 / n as f32,
+                        0.06,
+                    ));
+                }
+            }
+            1 => {
+                let n = r.pick(&[36, 48, 60]);
+                for i in 0..n {
+                    let a = start + TAU * i as f32 / n as f32;
+                    let inner = if i % 4 == 0 { b_ } else { (a_ + b_) / 2.0 };
+                    marks.push(Mark::line(
+                        vec![polar(a, a_), polar(a, inner)],
+                        6.0,
+                        Slot::Gilt,
+                        0.2 + 0.25 * i as f32 / n as f32,
+                        0.05,
+                    ));
+                }
+            }
+            2 => {
+                let n = r.pick(&[36, 44, 52]);
+                let pts = (0..=n * 2)
+                    .map(|i| {
+                        polar(
+                            start + PI * i as f32 / n as f32,
+                            if i % 2 == 0 { a_ } else { b_ },
+                        )
+                    })
+                    .collect();
+                marks.push(Mark::line(pts, 6.0, Slot::Gilt, 0.18, 0.3));
+            }
+            _ => {
+                marks.push(ring(a_ - 4.0, 6.0, Slot::Rubric, 0.18, 1.0));
+                marks.push(ring(b_ + 4.0, 6.0, Slot::Rubric, 0.22, -1.0));
+            }
+        }
+        marks.push(ring(b_, 8.0, Slot::Gilt, 0.15, 1.0));
+        r_fig = b_ - 8.0;
+    }
+
+    // The figure in the middle, in vermilion.
+    let turn = -FRAC_PI_2 + if r.chance(0.5) { 0.0 } else { r.range(0.0, PI) };
+    let regular = |n: usize, rad: f32, rot: f32| -> Vec<P> {
+        (0..=n)
+            .map(|i| polar(rot + TAU * i as f32 / n as f32, rad))
+            .collect()
+    };
+    let mut points: Vec<P> = Vec::new();
+    let w_fig = 12.0;
+    match r.pick(&[0, 0, 1, 2, 3, 4, 5]) {
+        0 => {
+            // A star {n/k}, each of its loops in one stroke.
+            let (n, k) = r.pick(&[
+                (5, 2),
+                (6, 2),
+                (7, 2),
+                (7, 3),
+                (8, 3),
+                (9, 2),
+                (9, 4),
+                (10, 3),
+                (11, 4),
+                (12, 5),
+            ]);
+            let vertex = |i: usize| polar(turn + TAU * i as f32 / n as f32, r_fig);
+            let loops = gcd(n, k);
+            for l in 0..loops {
+                let pts: Vec<P> = (0..=n / loops).map(|j| vertex(l + j * k)).collect();
+                marks.push(Mark::line(
+                    pts,
+                    w_fig,
+                    Slot::Rubric,
+                    0.22 + 0.35 * l as f32 / loops as f32,
+                    0.4 / loops as f32,
+                ));
+            }
+            points = (0..n).map(vertex).collect();
+            if r.chance(0.5) {
+                let ri = r_fig * (PI * k as f32 / n as f32).cos();
+                marks.push(Mark::line(
+                    arc(cx, cy, ri, turn, TAU),
+                    7.0,
+                    Slot::Rubric,
+                    0.5,
+                    0.25,
+                ));
+            }
+        }
+        1 => {
+            // Interlaced polygons: two squares, three triangles, two pentagons...
+            let (sides, m) = r.pick(&[(3, 2), (4, 2), (3, 3), (5, 2), (4, 3), (6, 2)]);
+            for j in 0..m {
+                let rot = turn + TAU / sides as f32 * j as f32 / m as f32;
+                marks.push(Mark::line(
+                    regular(sides, r_fig, rot),
+                    w_fig,
+                    Slot::Rubric,
+                    0.22 + 0.3 * j as f32 / m as f32,
+                    0.3 / m as f32 + 0.05,
+                ));
+                points
+                    .extend((0..sides).map(|i| polar(rot + TAU * i as f32 / sides as f32, r_fig)));
+            }
+        }
+        2 => {
+            // Polygons nested in each other, each touching the last's sides.
+            let sides = r.pick(&[3, 4, 5, 6, 8]);
+            let mut rad = r_fig;
+            let mut rot = turn;
+            let shrink = (PI / sides as f32).cos();
+            for j in 0..3 {
+                marks.push(Mark::line(
+                    regular(sides, rad, rot),
+                    if j == 0 { w_fig } else { 8.0 },
+                    Slot::Rubric,
+                    0.22 + 0.13 * j as f32,
+                    0.16,
+                ));
+                if j == 0 {
+                    points = (0..sides)
+                        .map(|i| polar(rot + TAU * i as f32 / sides as f32, rad))
+                        .collect();
+                }
+                rad *= shrink;
+                rot += PI / sides as f32;
+            }
+            marks.push(Mark::line(
+                arc(cx, cy, rad, turn, TAU),
+                7.0,
+                Slot::Gilt,
+                0.6,
+                0.2,
+            ));
+        }
+        3 => {
+            // A wheel: spokes out from a hub to the rim.
+            let n = r.pick(&[6, 8, 10, 12, 16]);
+            let hub = r_fig * r.range(0.35, 0.5);
+            marks.push(Mark::line(
+                arc(cx, cy, hub, turn, TAU),
+                8.0,
+                Slot::Rubric,
+                0.22,
+                0.2,
+            ));
+            for i in 0..n {
+                let a = turn + TAU * i as f32 / n as f32;
+                let reach = if n >= 12 && i % 2 == 1 {
+                    r_fig * 0.8
+                } else {
+                    r_fig
+                };
+                marks.push(Mark::line(
+                    vec![polar(a, hub), polar(a, reach)],
+                    9.0,
+                    Slot::Rubric,
+                    0.3 + 0.3 * i as f32 / n as f32,
+                    0.1,
+                ));
+                points.push(polar(a, reach));
+            }
+        }
+        4 => {
+            // Circles round the middle, each through it, overlapping into petals.
+            let n = r.pick(&[5, 6, 7, 8]);
+            let rad = r_fig / 2.0;
+            for i in 0..n {
+                let a = turn + TAU * i as f32 / n as f32;
+                let [x, y] = polar(a, rad);
+                marks.push(Mark::line(
+                    arc(x, y, rad, a + PI, TAU),
+                    7.0,
+                    Slot::Rubric,
+                    0.22 + 0.4 * i as f32 / n as f32,
+                    0.15,
+                ));
+                points.push(polar(a, r_fig));
+            }
+        }
+        _ => {
+            // The circle squared: a square in the circle, a circle in it, a triangle in that.
+            marks.push(Mark::line(
+                regular(4, r_fig, turn + PI / 4.0),
+                w_fig,
+                Slot::Rubric,
+                0.22,
+                0.18,
+            ));
+            let ri = r_fig / std::f32::consts::SQRT_2;
+            marks.push(Mark::line(
+                arc(cx, cy, ri, turn, TAU),
+                8.0,
+                Slot::Gilt,
+                0.38,
+                0.16,
+            ));
+            marks.push(Mark::line(
+                regular(3, ri, turn),
+                w_fig,
+                Slot::Rubric,
+                0.5,
+                0.15,
+            ));
+            points = (0..4)
+                .map(|i| polar(turn + PI / 4.0 + FRAC_PI_2 * i as f32, r_fig))
+                .collect();
+        }
+    }
+    // What marks its points: gold, rings, diamonds, or nothing.
+    let at_points = r.pick(&[0, 0, 1, 2, 3]);
+    let np = points.len().max(1) as f32;
+    for (i, &p) in points.iter().enumerate() {
+        let at = 0.55 + 0.12 * i as f32 / np;
+        match at_points {
+            0 => marks.push(Mark::dot(p, 15.0, Slot::Gilt, at, 0.12)),
+            1 => marks.push(Mark::line(
+                circle_poly(p[0], p[1], 16.0),
+                7.0,
+                Slot::Gilt,
+                at,
+                0.1,
+            )),
+            2 => {
+                let a = (p[1] - cy).atan2(p[0] - cx);
+                let d = |k: f32, l: f32| [p[0] + (a + k).cos() * l, p[1] + (a + k).sin() * l];
+                marks.push(Mark {
+                    shape: Shape::Fill(vec![
+                        d(0.0, 24.0),
+                        d(FRAC_PI_2, 13.0),
+                        d(PI, 24.0),
+                        d(-FRAC_PI_2, 13.0),
+                    ]),
+                    slot: Slot::Gilt,
+                    at,
+                    dur: 0.1,
+                });
+            }
+            _ => {}
+        }
+    }
     marks.extend(runes);
 
-    // A sigil in each corner, where it has room.
+    // The corners, all four alike in kind: sigils, the elements' triangles, moons, the sun's and
+    // the earth's signs, or arcs swung from the corner.
     let corner = big * 0.85;
     let size = big * 0.2;
-    for (k, (sx, sy)) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+    let kind = r.pick(&[0, 0, 1, 2, 3, 4]);
+    let mut elements = [0usize, 1, 2, 3];
+    if kind == 1 {
+        for i in (1..4).rev() {
+            let j = (r.next() * (i + 1) as f32) as usize % (i + 1);
+            elements.swap(i, j);
+        }
+    }
+    for (k, (sx, sy)) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
         .into_iter()
         .enumerate()
     {
@@ -811,23 +1052,135 @@ fn seal(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
         if !room.at(x, y) {
             continue;
         }
-        let (path, ring) = sigil(r);
-        let place = |q: &P| [x + q[0] * size, y + q[1] * size];
         let at = 0.7 + 0.06 * k as f32;
-        marks.push(Mark::line(
-            circle_poly(ring[0] * size + x, ring[1] * size + y, size * 0.13),
-            8.0,
-            Slot::Gilt,
-            at,
-            0.06,
-        ));
-        marks.push(Mark::line(
-            path.iter().map(place).collect(),
-            9.0,
-            Slot::Gilt,
-            at + 0.05,
-            0.16,
-        ));
+        let place = |q: &P| [x + q[0] * size, y + q[1] * size];
+        match kind {
+            0 => {
+                let (path, ring) = sigil(r);
+                marks.push(Mark::line(
+                    circle_poly(ring[0] * size + x, ring[1] * size + y, size * 0.13),
+                    8.0,
+                    Slot::Gilt,
+                    at,
+                    0.06,
+                ));
+                marks.push(Mark::line(
+                    path.iter().map(place).collect(),
+                    9.0,
+                    Slot::Gilt,
+                    at + 0.05,
+                    0.16,
+                ));
+            }
+            1 => {
+                // Fire, water, air, earth.
+                let e = elements[k];
+                let up = e.is_multiple_of(2);
+                let s = if up { 1.0 } else { -1.0 };
+                let tri = [
+                    [0.0, -0.4 * s],
+                    [0.42, 0.32 * s],
+                    [-0.42, 0.32 * s],
+                    [0.0, -0.4 * s],
+                ];
+                marks.push(Mark::line(
+                    tri.iter().map(place).collect(),
+                    9.0,
+                    Slot::Gilt,
+                    at,
+                    0.14,
+                ));
+                if e >= 2 {
+                    let bar = [[-0.36, 0.0], [0.36, 0.0]];
+                    marks.push(Mark::line(
+                        bar.iter().map(place).collect(),
+                        9.0,
+                        Slot::Gilt,
+                        at + 0.12,
+                        0.06,
+                    ));
+                }
+            }
+            2 => {
+                // A crescent, turned to the middle, with a star.
+                let a = (cy - y).atan2(cx - x);
+                let rad = size * 0.38;
+                marks.push(Mark {
+                    shape: Shape::Crescent(
+                        [x, y, rad],
+                        [a.cos() * rad * 0.45, a.sin() * rad * 0.45],
+                        0.9,
+                    ),
+                    slot: Slot::Gilt,
+                    at,
+                    dur: 0.15,
+                });
+                marks.push(Mark::dot(
+                    place(&[0.35 * a.cos(), 0.35 * a.sin()]),
+                    7.0,
+                    Slot::Gilt,
+                    at + 0.12,
+                    0.06,
+                ));
+            }
+            3 => {
+                // The sun's sign, or the earth's.
+                let rad = size * 0.36;
+                marks.push(Mark::line(
+                    circle_poly(x, y, rad),
+                    9.0,
+                    Slot::Gilt,
+                    at,
+                    0.12,
+                ));
+                if k % 2 == 0 {
+                    marks.push(Mark::dot([x, y], 9.0, Slot::Gilt, at + 0.1, 0.06));
+                } else {
+                    marks.push(Mark::line(
+                        vec![[x - rad, y], [x + rad, y]],
+                        8.0,
+                        Slot::Gilt,
+                        at + 0.1,
+                        0.05,
+                    ));
+                    marks.push(Mark::line(
+                        vec![[x, y - rad], [x, y + rad]],
+                        8.0,
+                        Slot::Gilt,
+                        at + 0.13,
+                        0.05,
+                    ));
+                }
+            }
+            _ => {
+                // Arcs swung from the field's corner.
+                let (fx, fy) = (
+                    if sx < 0.0 { fb.x0 } else { fb.x1 },
+                    if sy < 0.0 { fb.y0 } else { fb.y1 },
+                );
+                let a0 = (cy - fy).atan2(cx - fx) - FRAC_PI_4;
+                for (j, rad) in [0.45f32, 0.75, 1.05].into_iter().enumerate() {
+                    let pts = arc(fx, fy, size * rad, a0, FRAC_PI_2);
+                    marks.push(Mark::line(
+                        pts,
+                        if j == 1 { 9.0 } else { 6.0 },
+                        if j == 1 { Slot::Rubric } else { Slot::Gilt },
+                        at + 0.04 * j as f32,
+                        0.1,
+                    ));
+                }
+                marks.push(Mark::dot(
+                    [
+                        fx + (cx - fx).signum() * size * 0.2,
+                        fy + (cy - fy).signum() * size * 0.2,
+                    ],
+                    9.0,
+                    Slot::Gilt,
+                    at + 0.14,
+                    0.06,
+                ));
+            }
+        }
     }
     marks
 }
@@ -836,9 +1189,29 @@ fn gcd(a: usize, b: usize) -> usize {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
-/// The chart's figure: orbits swung round the letter with a planet on each, two or three
-/// constellations, a crescent moon where there's room, and stardust. Each spell's sky is its
-/// own.
+/// Where in the field there's most room, of `tries` places, clear of what's `taken`.
+fn roomiest(
+    fb: Box2,
+    room: &Room,
+    taken: &[[f32; 3]],
+    r: &mut Rng,
+    tries: usize,
+    max: f32,
+) -> (f32, P) {
+    let mut best = (0.0, [0.0, 0.0]);
+    for _ in 0..tries {
+        let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
+        let c = room.clearance(x, y, max);
+        if c > best.0 && !taken.iter().any(|t| (t[0] - x).hypot(t[1] - y) < t[2] + c) {
+            best = (c, [x, y]);
+        }
+    }
+    best
+}
+
+/// The chart's figure: a sky of its own for each spell, from orbits with their planets, a
+/// zodiac's arc under the arch, a moon in one of its phases, the sun, a comet, constellations,
+/// and stardust.
 fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
     let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0 + 0.06 * fb.h());
     let big = fb.w().min(fb.h()) / 2.0;
@@ -848,13 +1221,50 @@ fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
         taken.iter().any(|t| (t[0] - x).hypot(t[1] - y) < t[2] + d)
     };
 
+    // The zodiac: a band under the arch, with its divisions.
+    if r.chance(0.4) {
+        let (ax, ay, ar) = ((fb.x0 + fb.x1) / 2.0, fb.y0 + fb.w() / 2.0, fb.w() / 2.0);
+        let (o, i) = (ar - 16.0, ar - 62.0);
+        marks.push(Mark::line(
+            arc(ax, ay, o, PI, PI),
+            6.0,
+            Slot::Gilt,
+            0.0,
+            0.3,
+        ));
+        marks.push(Mark::line(
+            arc(ax, ay, i, TAU, -PI),
+            6.0,
+            Slot::Gilt,
+            0.05,
+            0.3,
+        ));
+        let n = 12;
+        for k in 0..=n / 2 {
+            let a = PI + PI * k as f32 / (n / 2) as f32;
+            let p = |rad: f32| [ax + a.cos() * rad, ay + a.sin() * rad];
+            marks.push(Mark::line(
+                vec![p(i), p(o)],
+                6.0,
+                Slot::Gilt,
+                0.2 + 0.03 * k as f32,
+                0.05,
+            ));
+            if k < n / 2 {
+                let b = a + PI / n as f32;
+                let q = [ax + b.cos() * (o + i) / 2.0, ay + b.sin() * (o + i) / 2.0];
+                marks.push(Mark::dot(q, 8.0, Slot::Paper, 0.25 + 0.03 * k as f32, 0.08));
+            }
+        }
+    }
+
     // Orbits: tilted ellipses, part drawn, a planet where each ends.
-    for k in 0..r.pick(&[1, 2, 2]) {
-        let rx = big * r.range(0.8, 0.98);
-        let ry = rx * r.range(0.3, 0.48);
+    for k in 0..r.pick(&[0, 1, 1, 2, 2, 3]) {
+        let rx = big * r.range(0.75, 0.98);
+        let ry = rx * r.range(0.25, 0.5);
         let tilt = r.range(-0.7, 0.7) + k as f32 * 0.9;
         let a0 = r.range(0.0, TAU);
-        let span = TAU * r.range(0.6, 0.82) * if r.chance(0.5) { 1.0 } else { -1.0 };
+        let span = TAU * r.range(0.55, 0.85) * if r.chance(0.5) { 1.0 } else { -1.0 };
         let n = 120;
         let (c, s) = (tilt.cos(), tilt.sin());
         let pts: Vec<P> = (0..=n)
@@ -866,50 +1276,153 @@ fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
             .collect();
         let end = *pts.last().unwrap();
         let at = 0.04 * k as f32;
-        marks.push(Mark::line(pts, 8.0, Slot::Gilt, at, 0.5));
+        marks.push(Mark::line(
+            pts,
+            if k == 0 { 8.0 } else { 6.0 },
+            Slot::Gilt,
+            at,
+            0.5,
+        ));
         if room.clear(end[0], end[1], 22.0) {
-            marks.push(Mark::dot(end, 17.0, Slot::Gilt, at + 0.48, 0.12));
-            marks.push(Mark::line(
-                circle_poly(end[0], end[1], 32.0),
-                6.0,
+            marks.push(Mark::dot(
+                end,
+                r.range(13.0, 19.0),
                 Slot::Gilt,
-                at + 0.55,
+                at + 0.48,
                 0.12,
             ));
+            if r.chance(0.6) {
+                // Ringed.
+                let (rx, ry, t) = (r.range(28.0, 36.0), r.range(8.0, 13.0), r.range(-0.6, 0.6));
+                let ring: Vec<P> = (0..=40)
+                    .map(|i| {
+                        let a = TAU * i as f32 / 40.0;
+                        let (ex, ey) = (a.cos() * rx, a.sin() * ry);
+                        [
+                            end[0] + ex * t.cos() - ey * t.sin(),
+                            end[1] + ex * t.sin() + ey * t.cos(),
+                        ]
+                    })
+                    .collect();
+                marks.push(Mark::line(ring, 5.0, Slot::Gilt, at + 0.55, 0.12));
+            } else {
+                marks.push(Mark::line(
+                    circle_poly(end[0], end[1], 32.0),
+                    5.0,
+                    Slot::Gilt,
+                    at + 0.55,
+                    0.12,
+                ));
+            }
             taken.push([end[0], end[1], 40.0]);
         }
     }
 
-    // A crescent moon, where there's most room.
-    let mut best = (0.0, [0.0, 0.0]);
-    for _ in 0..60 {
-        let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
-        let c = room.clearance(x, y, 90.0);
-        if c > best.0 && !near(&taken, x, y, c) {
-            best = (c, [x, y]);
-        }
-    }
-    if best.0 >= 40.0 {
-        let rad = (best.0 - 8.0).min(70.0);
+    // The moon, where there's most room, in one of its phases.
+    let (room_for, [x, y]) = roomiest(fb, room, &taken, r, 60, 90.0);
+    if room_for >= 40.0 {
+        let rad = (room_for - 8.0).min(70.0);
         let a = r.range(0.0, TAU);
-        let [x, y] = best.1;
-        marks.push(Mark {
-            shape: Shape::Crescent(
-                [x, y, rad],
-                [a.cos() * rad * 0.42, a.sin() * rad * 0.42],
-                0.9,
-            ),
-            slot: Slot::Gilt,
-            at: 0.35,
-            dur: 0.35,
-        });
+        let (off, k) = r.pick(&[
+            (0.42, 0.9),
+            (0.42, 0.9),
+            (0.25, 0.95),
+            (0.6, 0.85),
+            (0.0, 0.0),
+        ]);
+        if k == 0.0 {
+            // Full, with its seas.
+            marks.push(Mark::line(
+                circle_poly(x, y, rad * 0.8),
+                7.0,
+                Slot::Gilt,
+                0.35,
+                0.2,
+            ));
+            for _ in 0..3 {
+                let (d, b) = (r.range(0.0, rad * 0.45), r.range(0.0, TAU));
+                marks.push(Mark::dot(
+                    [x + b.cos() * d, y + b.sin() * d],
+                    r.range(8.0, 14.0),
+                    Slot::Gilt,
+                    0.5,
+                    0.15,
+                ));
+            }
+        } else {
+            marks.push(Mark {
+                shape: Shape::Crescent([x, y, rad], [a.cos() * rad * off, a.sin() * rad * off], k),
+                slot: Slot::Gilt,
+                at: 0.35,
+                dur: 0.35,
+            });
+        }
         taken.push([x, y, rad + 16.0]);
     }
 
+    // The sun: a disc, and its rays.
+    if r.chance(0.35) {
+        let (room_for, [x, y]) = roomiest(fb, room, &taken, r, 60, 90.0);
+        if room_for >= 50.0 {
+            let rad = (room_for * 0.4).min(32.0);
+            marks.push(Mark::dot([x, y], rad, Slot::Gilt, 0.4, 0.15));
+            let n = r.pick(&[8, 12, 16]);
+            for i in 0..n {
+                let a = TAU * i as f32 / n as f32;
+                let l = if i % 2 == 0 { 1.9 } else { 1.5 };
+                let p = |k: f32| [x + a.cos() * rad * k, y + a.sin() * rad * k];
+                marks.push(Mark::line(
+                    vec![p(1.3), p(l)],
+                    6.0,
+                    Slot::Gilt,
+                    0.5 + 0.15 * i as f32 / n as f32,
+                    0.06,
+                ));
+            }
+            taken.push([x, y, rad * 2.0 + 10.0]);
+        }
+    }
+
+    // A comet, its tail streaming away.
+    if r.chance(0.35) {
+        for _ in 0..30 {
+            let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
+            let d = r.range(0.0, TAU);
+            let l = r.range(120.0, 190.0);
+            let along = |k: f32| [x + d.cos() * l * k, y + d.sin() * l * k];
+            if !(0..=6).all(|k| {
+                let p = along(k as f32 / 6.0);
+                room.clear(p[0], p[1], 14.0) && !near(&taken, p[0], p[1], 14.0)
+            }) {
+                continue;
+            }
+            for (j, fan) in [-0.12f32, 0.0, 0.12].into_iter().enumerate() {
+                let e = [
+                    x + (d + fan).cos() * l * (1.0 - 0.2 * fan.abs() * 5.0),
+                    y + (d + fan).sin() * l * (1.0 - 0.2 * fan.abs() * 5.0),
+                ];
+                marks.push(Mark::line(
+                    vec![[x, y], e],
+                    if j == 1 { 7.0 } else { 4.0 },
+                    Slot::Gilt,
+                    0.45 + 0.03 * j as f32,
+                    0.2,
+                ));
+            }
+            marks.push(Mark::dot([x, y], 13.0, Slot::Paper, 0.42, 0.1));
+            for k in 0..=4 {
+                let p = along(k as f32 / 4.0);
+                taken.push([p[0], p[1], 20.0]);
+            }
+            break;
+        }
+    }
+
     // Constellations: a few bright stars, joined.
+    let points = r.pick(&[4, 4, 6, 8]);
     let mut lines = Vec::new();
     let mut stars = Vec::new();
-    for k in 0..r.pick(&[2, 3, 3]) {
+    for k in 0..r.pick(&[1, 2, 2, 3, 3]) {
         let mut chain: Vec<P> = Vec::new();
         for _ in 0..40 {
             let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
@@ -923,11 +1436,11 @@ fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
         };
         let mut dir = r.range(0.0, TAU);
         let mut last = first;
-        for _ in 0..r.pick(&[3, 4, 5]) {
+        for _ in 0..r.pick(&[3, 4, 5, 6]) {
             let mut placed = false;
             for _ in 0..24 {
                 let d = dir + r.range(-1.1, 1.1);
-                let l = r.range(90.0, 160.0);
+                let l = r.range(80.0, 160.0);
                 let p = [last[0] + d.cos() * l, last[1] + d.sin() * l];
                 let midway = [(p[0] + last[0]) / 2.0, (p[1] + last[1]) / 2.0];
                 if room.clear(p[0], p[1], 20.0)
@@ -957,7 +1470,7 @@ fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
             let at = begin + each * j as f32;
             if j == 0 || r.chance(0.25) {
                 stars.push(Mark {
-                    shape: Shape::Fill(sparkle(p[0], p[1], r.range(30.0, 40.0))),
+                    shape: Shape::Fill(sparkle(p[0], p[1], r.range(30.0, 40.0), points)),
                     slot: Slot::Paper,
                     at,
                     dur: 0.12,
@@ -980,10 +1493,11 @@ fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
     marks.extend(lines);
     marks.extend(stars);
 
-    // Stardust in what's left of the sky.
+    // Stardust in what's left of the sky, thick or thin.
+    let thick = r.pick(&[40, 60, 70, 90]);
     let mut dust = Vec::new();
-    for _ in 0..500 {
-        if dust.len() >= 70 {
+    for _ in 0..600 {
+        if dust.len() >= thick {
             break;
         }
         let (x, y) = (r.range(fb.x0, fb.x1), r.range(fb.y0, fb.y1));
@@ -1407,7 +1921,10 @@ mod tests {
         for (kind, _) in KINDS {
             let a = Scene::build('H', "spell:hello.ts:hello", kind);
             let b = Scene::build('H', "spell:hello.ts:hi", kind);
-            assert_eq!(a.letter, b.letter, "one kind: the same letter in the same frame");
+            assert_eq!(
+                a.letter, b.letter,
+                "one kind: the same letter in the same frame"
+            );
             assert_ne!(
                 format!("{:?}", a.marks),
                 format!("{:?}", b.marks),
@@ -1417,7 +1934,7 @@ mod tests {
     }
 
     /// A sheet of initials on parchment, for looking at: `cargo test --release sheet -- --ignored`.
-    /// For each kind, its spells a third, two thirds and all the way inscribed.
+    /// For each kind, its spells inscribed (at each of `STAGES`).
     #[test]
     #[ignore]
     fn sheet() {
@@ -1430,14 +1947,28 @@ mod tests {
             "spell:git.ts:branches",
             "spell:hello.ts:hello",
             "entry:insomnia",
+            "spell:party.ts:party",
+            "spell:sky.ts:sky",
+            "spell:note.ts:note",
+            "spell:timer.ts:timer",
+            "spell:music.ts:play",
+            "spell:emoji.ts:pick",
+            "spell:color.ts:picker",
+            "spell:kill.ts:kill",
         ];
         let px: u32 = std::env::var("PX")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(200);
-        let ts = [0.33f32, 0.66, 1.0];
-        let cols = ids.len();
-        let rows = KINDS.len() * ts.len();
+        // STAGES=0.33,0.66,1 shows them being inscribed.
+        let ts: Vec<f32> = std::env::var("STAGES")
+            .unwrap_or("1".into())
+            .split(',')
+            .filter_map(|v| v.parse().ok())
+            .collect();
+        let cols = 8;
+        let per = ids.len().div_ceil(cols);
+        let rows = KINDS.len() * ts.len() * per;
         let (w, h) = (px * cols as u32, px * rows as u32);
         let mut sheet = tiny_skia::Pixmap::new(w, h).unwrap();
         sheet.fill(tiny_skia::Color::from_rgba8(232, 214, 176, 255));
@@ -1445,44 +1976,49 @@ mod tests {
         for (k, (kind, inks)) in KINDS.into_iter().enumerate() {
             for (j, &t) in ts.iter().enumerate() {
                 for (i, id) in ids.iter().enumerate() {
-                    cells.push((i, k * ts.len() + j, kind, inks, *id, t));
+                    cells.push((
+                        i % cols,
+                        (k * ts.len() + j) * per + i / cols,
+                        kind,
+                        inks,
+                        *id,
+                        t,
+                    ));
                 }
             }
         }
-        {
-            for (col, row, kind, inks, id, t) in cells {
-                let letter = id
-                    .rsplit(':')
-                    .next()
-                    .unwrap()
-                    .chars()
-                    .next()
-                    .unwrap()
-                    .to_ascii_uppercase();
+        for (col, row, kind, inks, id, t) in cells {
+            let letter = id
+                .rsplit(':')
+                .next()
+                .unwrap()
+                .chars()
+                .next()
+                .unwrap()
+                .to_ascii_uppercase();
+            let began = std::time::Instant::now();
+            let scene = Scene::build(letter, id, kind);
+            if t == 1.0 {
+                let built = began.elapsed();
                 let began = std::time::Instant::now();
-                let scene = Scene::build(letter, id, kind);
-                if t == 1.0 {
-                    let built = began.elapsed();
-                    let began = std::time::Instant::now();
-                    let _ = scene.paint(0.5, 124, &inks);
-                    eprintln!(
-                        "{kind:?} {id}: built in {built:?}, painted in {:?}, {} marks",
-                        began.elapsed(),
-                        scene.marks.len()
-                    );
-                }
-                let rgba = scene.paint(t, px, &inks);
-                let (x0, y0) = (col as u32 * px, row as u32 * px);
-                let data = sheet.data_mut();
-                for y in 0..px {
-                    for x in 0..px {
-                        let s = ((y * px + x) * 4) as usize;
-                        let d = (((y0 + y) * w + x0 + x) * 4) as usize;
-                        let a = rgba[s + 3] as f32 / 255.0;
-                        for c in 0..3 {
-                            data[d + c] =
-                                (data[d + c] as f32 * (1.0 - a) + rgba[s + c] as f32 * a) as u8;
-                        }
+                let _ = scene.paint(0.5, 124, &inks);
+                eprintln!(
+                    "{kind:?} {id}: built in {built:?}, painted in {:?}, {} marks",
+                    began.elapsed(),
+                    scene.marks.len()
+                );
+            }
+            let rgba = scene.paint(t, px, &inks);
+            let (x0, y0) = (col as u32 * px, row as u32 * px);
+            let data = sheet.data_mut();
+            for y in 0..px {
+                for x in 0..px {
+                    let s = ((y * px + x) * 4) as usize;
+                    let d = (((y0 + y) * w + x0 + x) * 4) as usize;
+                    let a = rgba[s + 3] as f32 / 255.0;
+                    for c in 0..3 {
+                        data[d + c] =
+                            (data[d + c] as f32 * (1.0 - a) + rgba[s + c] as f32 * a) as u8;
                     }
                 }
             }

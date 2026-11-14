@@ -158,9 +158,11 @@ impl Book {
             .collect();
         wants.sort_by_key(|w| w.0);
         let px = (ILLUMINATION * look.scale).round() as u32;
-        self.illuminations
-            .borrow_mut()
-            .prepare(wants.into_iter().map(|(_, id, c)| (id, c)), v.initial, px);
+        self.illuminations.borrow_mut().prepare(
+            wants.into_iter().map(|(_, id, c)| (id, c)),
+            v.initial,
+            px,
+        );
     }
 
     /// The highlight moved to `index`: turn a leaf toward it.
