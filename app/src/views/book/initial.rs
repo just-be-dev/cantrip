@@ -1365,7 +1365,7 @@ mod tests {
         ink: [0.16, 0.09, 0.24],
         rubric: [0.45, 0.14, 0.52],
         gilt: [0.80, 0.62, 0.28],
-        azure: [0.14, 0.24, 0.48],
+        azure: [0.25, 0.13, 0.45],
     };
     const KINDS: [(Kind, Inks); 2] = [(Kind::Seal, SIGIL), (Kind::Chart, ARCANE)];
 

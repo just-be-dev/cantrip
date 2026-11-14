@@ -622,8 +622,8 @@ fn ink(theme: Theme) -> Ink {
                 ink: [0.16, 0.09, 0.24],
                 rubric: [0.45, 0.14, 0.52],
                 gilt: [0.80, 0.62, 0.28],
-                // Woad, dark towards night.
-                azure: [0.14, 0.24, 0.48],
+                // Violet night, like the bar's glass.
+                azure: [0.25, 0.13, 0.45],
             },
             // Starlight: a chart of the sky.
             initial: initial::Kind::Chart,
