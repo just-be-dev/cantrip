@@ -84,15 +84,9 @@ pub enum Kind {
     /// A seal: a gold blackletter capital over a magic circle on ink, a band of runes round
     /// it, a star drawn through it, and sigils in the corners.
     Seal,
-    /// A star chart: a gold Roman capital under an arch of night, with constellations, orbits, a
-    /// crescent moon and stardust.
+    /// A star chart: a gold Roman capital on a square of night, with constellations, orbits, a
+    /// moon and stardust.
     Chart,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Frame {
-    Rect,
-    Arch,
 }
 
 /// How a kind of initial is set: its letter, frame and ground, and how it's printed.
@@ -106,7 +100,6 @@ struct Style {
     echo_gap: f32,
     echo_w: f32,
     echo_slot: Slot,
-    frame: Frame,
     margin: f32,
     w1: f32,
     rule_gap: f32,
@@ -130,7 +123,6 @@ impl Style {
                 echo_gap: 34.0,
                 echo_w: 8.0,
                 echo_slot: Slot::Rubric,
-                frame: Frame::Rect,
                 margin: 18.0,
                 w1: 18.0,
                 rule_gap: 10.0,
@@ -150,7 +142,6 @@ impl Style {
                 echo_gap: 36.0,
                 echo_w: 6.0,
                 echo_slot: Slot::Paper,
-                frame: Frame::Arch,
                 margin: 18.0,
                 w1: 16.0,
                 rule_gap: 10.0,
@@ -162,22 +153,6 @@ impl Style {
                 mottle: 0.16,
                 speckle: 0.08,
             },
-        }
-    }
-}
-
-/// The frame's outline, in the box `x`, `y`, `w`, `h`.
-fn frame_poly(kind: Frame, x: f32, y: f32, w: f32, h: f32) -> Vec<P> {
-    match kind {
-        Frame::Rect => vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
-        Frame::Arch => {
-            let r = w / 2.0;
-            let mut pts = vec![[x + w, y + h], [x, y + h]];
-            for i in 0..=40 {
-                let a = PI + PI * i as f32 / 40.0;
-                pts.push([x + r + a.cos() * r, y + r + a.sin() * r]);
-            }
-            pts
         }
     }
 }
@@ -469,7 +444,7 @@ impl Scene {
     fn of(letter: char, kind: Kind, seed: u32) -> Scene {
         let st = Style::of(kind);
         let m = st.margin;
-        let base = frame_poly(st.frame, m, m, W - 2.0 * m, W - 2.0 * m);
+        let base = vec![[m, m], [W - m, m], [W - m, W - m], [m, W - m]];
         let mut rules = vec![Rule {
             pts: offset_polygon(&base, st.w1 / 2.0),
             w: st.w1,
@@ -493,15 +468,7 @@ impl Scene {
             let s = (st.size * fb.h() / face.cap_height.max(b.h() * 0.6))
                 .min(st.size * 1.15 * fb.w() / b.w())
                 .min(1.6 * fb.h() / b.h());
-            let (cx, cy) = (
-                (fb.x0 + fb.x1) / 2.0,
-                (fb.y0 + fb.y1) / 2.0
-                    + if st.frame == Frame::Arch {
-                        0.06 * fb.h()
-                    } else {
-                        0.0
-                    },
-            );
+            let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0);
             let (bx, by) = ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
             glyph
                 .iter()
@@ -1210,10 +1177,10 @@ fn roomiest(
 }
 
 /// The chart's figure: a sky of its own for each spell, from orbits with their planets, a
-/// zodiac's arc under the arch, a moon in one of its phases, the sun, a comet, constellations,
+/// zodiac's ring of houses, a moon in one of its phases, the sun, a comet, constellations,
 /// and stardust.
 fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
-    let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0 + 0.06 * fb.h());
+    let (cx, cy) = ((fb.x0 + fb.x1) / 2.0, (fb.y0 + fb.y1) / 2.0);
     let big = fb.w().min(fb.h()) / 2.0;
     let mut marks = Vec::new();
     let mut taken: Vec<[f32; 3]> = Vec::new();
@@ -1221,40 +1188,34 @@ fn chart(fb: Box2, room: &Room, r: &mut Rng) -> Vec<Mark> {
         taken.iter().any(|t| (t[0] - x).hypot(t[1] - y) < t[2] + d)
     };
 
-    // The zodiac: a band under the arch, with its divisions.
+    // The zodiac: a ring of twelve houses round the sky, a star in each.
     if r.chance(0.4) {
-        let (ax, ay, ar) = ((fb.x0 + fb.x1) / 2.0, fb.y0 + fb.w() / 2.0, fb.w() / 2.0);
-        let (o, i) = (ar - 16.0, ar - 62.0);
+        let ar = big * 0.97;
+        let (o, i) = (ar - 4.0, ar - 48.0);
+        let turn = r.range(0.0, TAU);
         marks.push(Mark::line(
-            arc(ax, ay, o, PI, PI),
+            arc(cx, cy, o, turn, TAU),
             6.0,
             Slot::Gilt,
             0.0,
             0.3,
         ));
         marks.push(Mark::line(
-            arc(ax, ay, i, TAU, -PI),
+            arc(cx, cy, i, turn, -TAU),
             6.0,
             Slot::Gilt,
             0.05,
             0.3,
         ));
         let n = 12;
-        for k in 0..=n / 2 {
-            let a = PI + PI * k as f32 / (n / 2) as f32;
-            let p = |rad: f32| [ax + a.cos() * rad, ay + a.sin() * rad];
-            marks.push(Mark::line(
-                vec![p(i), p(o)],
-                6.0,
-                Slot::Gilt,
-                0.2 + 0.03 * k as f32,
-                0.05,
-            ));
-            if k < n / 2 {
-                let b = a + PI / n as f32;
-                let q = [ax + b.cos() * (o + i) / 2.0, ay + b.sin() * (o + i) / 2.0];
-                marks.push(Mark::dot(q, 8.0, Slot::Paper, 0.25 + 0.03 * k as f32, 0.08));
-            }
+        for k in 0..n {
+            let a = turn + TAU * k as f32 / n as f32;
+            let p = |rad: f32| [cx + a.cos() * rad, cy + a.sin() * rad];
+            let at = 0.2 + 0.25 * k as f32 / n as f32;
+            marks.push(Mark::line(vec![p(i), p(o)], 6.0, Slot::Gilt, at, 0.05));
+            let b = a + PI / n as f32;
+            let q = [cx + b.cos() * (o + i) / 2.0, cy + b.sin() * (o + i) / 2.0];
+            marks.push(Mark::dot(q, 8.0, Slot::Paper, at + 0.03, 0.08));
         }
     }
 
