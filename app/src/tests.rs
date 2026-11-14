@@ -218,6 +218,30 @@ fn opening_plays_the_intro_from_a_closed_pose() {
 }
 
 #[test]
+fn reopening_the_bar_starts_with_an_empty_field() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "uuid");
+    assert_eq!(titles(&rt)[0], "Generate UUID");
+    press(&mut rt, Key::Enter);
+    assert!(!rt.state.visible, "casting closes the bar");
+    rt.update(|s, _| s.show_panel());
+    settle(&mut rt);
+    assert_eq!(rt.state.query(), "", "what was typed went with it");
+    assert_eq!(rt.state.field.text, "");
+    assert_eq!(rt.state.selection(), 0);
+
+    // Closed some other way (clicking away), and reopened mid-exit: still empty.
+    rt.state.services.live = true;
+    type_text(&mut rt, "theme");
+    rt.update(|s, _| s.hide_panel());
+    assert!(rt.state.closing);
+    rt.update(|s, _| s.show_panel());
+    settle(&mut rt);
+    assert_eq!(rt.state.query(), "");
+    assert_eq!(rt.state.field.text, "");
+}
+
+#[test]
 fn closing_disperses_before_the_window_hides_and_reopening_mid_way_plays_the_intro() {
     let mut rt = runtime(fixtures::root);
     // As the live app does; with no panel handle the delayed hide lands at once in the log.
@@ -910,9 +934,8 @@ fn an_initial_is_inscribed_as_the_page_bringing_it_turns() {
     press(&mut rt, Key::Enter);
     let first = rt.state.rows()[0].id.clone();
     let second = rt.state.rows()[1].id.clone();
-    let grown = |rt: &rune::Runtime<Cantrip>, id: &str| {
-        rt.state.book.as_ref().and_then(|b| b.grown_at(id))
-    };
+    let grown =
+        |rt: &rune::Runtime<Cantrip>, id: &str| rt.state.book.as_ref().and_then(|b| b.grown_at(id));
     // The first page's initial starts as the cover lands and the writing seeps in.
     rt.update(|s, tx| {
         s.animate_book(10.0, tx);

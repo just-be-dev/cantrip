@@ -371,6 +371,19 @@ impl Cantrip {
         if text == self.query() {
             return;
         }
+        if self.session.is_none() {
+            // The wand casts what was typed and takes back what was deleted.
+            let old = self.root_field_query().to_string();
+            self.wand.edited(&old, &text, self.theme);
+        }
+        self.put_query(text);
+    }
+
+    /// Make `text` the query of whatever is on top, without the wand's spells.
+    fn put_query(&mut self, text: String) {
+        if text == self.query() {
+            return;
+        }
         self.intro_rows = false;
         self.actions_open = false;
         if let Some(session) = &mut self.session {
@@ -390,17 +403,14 @@ impl Cantrip {
                 });
             }
         } else if let Some(picker) = &mut self.picker {
-            self.wand.edited(&picker.query, &text, self.theme);
             picker.query = text;
             picker.selection = 0;
             self.changed();
             self.preview_theme();
         } else if let Some(book) = &mut self.book {
-            self.wand.edited(&book.query, &text, self.theme);
             book.query = text;
             book.selection = 0;
         } else {
-            self.wand.edited(&self.root_query, &text, self.theme);
             self.root_query = text;
             self.root_selection = 0;
         }
@@ -1043,6 +1053,11 @@ impl Cantrip {
     pub fn show_panel(&mut self) {
         if self.hidden_at.is_some_and(|at| at.elapsed() > FRESH_AFTER) {
             self.reset();
+        }
+        if !self.visible {
+            // Whatever was typed went with the bar: it opens on an empty field.
+            self.put_query(String::new());
+            self.sync_field();
         }
         if self.closing {
             // Reopened mid-exit: the window is still up, so the intro plays straight away.
