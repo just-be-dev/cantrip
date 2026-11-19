@@ -98,23 +98,27 @@ pub enum MainCommand {
     OpenJournal,
     ReloadGrimoire,
     RestartHost,
+    OpenSettings,
     ToggleLogin,
     Quit,
 }
 
-const MAIN_COMMANDS: [MainCommand; 8] = [
+const MAIN_COMMANDS: [MainCommand; 9] = [
     MainCommand::OpenPanel,
     MainCommand::OpenGrimoire,
     MainCommand::RevealGrimoire,
     MainCommand::OpenJournal,
     MainCommand::ReloadGrimoire,
     MainCommand::RestartHost,
+    MainCommand::OpenSettings,
     MainCommand::ToggleLogin,
     MainCommand::Quit,
 ];
 
 pub struct MainItem {
     item: Retained<NSStatusItem>,
+    /// Open Cantrip, showing the hotkey.
+    open: Retained<NSMenuItem>,
     login: Retained<NSMenuItem>,
     _target: Retained<MenuTarget>,
 }
@@ -177,24 +181,6 @@ impl MainItem {
             "",
             "wand.and.sparkles",
         );
-        // Shown right-aligned in menu glyphs (⌥Space); the global hotkey does the real work.
-        if let Some((key, mods)) = &spec.shortcut {
-            open.setKeyEquivalent(&NSString::from_str(key));
-            let mut mask = NSEventModifierFlags::empty();
-            if mods.cmd {
-                mask |= NSEventModifierFlags::Command
-            }
-            if mods.option {
-                mask |= NSEventModifierFlags::Option
-            }
-            if mods.ctrl {
-                mask |= NSEventModifierFlags::Control
-            }
-            if mods.shift {
-                mask |= NSEventModifierFlags::Shift
-            }
-            open.setKeyEquivalentModifierMask(mask);
-        }
         let mut group = None;
         for (command, title, tooltip, icon, key) in &spec.builtins {
             let g = matches!(
@@ -208,17 +194,41 @@ impl MainItem {
             add(*command, title, key, icon).setToolTip(Some(&NSString::from_str(tooltip)));
         }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
+        add(MainCommand::OpenSettings, "Settings…", ",", "gearshape");
         let login = add(MainCommand::ToggleLogin, "Launch at Login", "", "sunrise");
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         add(MainCommand::Quit, "Quit Cantrip", "q", "power");
         item.setMenu(Some(&menu));
         let main = MainItem {
             item,
+            open,
             login,
             _target: target,
         };
+        main.set_shortcut(spec.shortcut);
         main.refresh_login();
         main
+    }
+
+    /// Show the hotkey beside Open Cantrip, in menu glyphs (⌥Space); the global hotkey does
+    /// the real work. None shows nothing.
+    pub fn set_shortcut(&self, shortcut: Option<(String, crate::config::MenuMods)>) {
+        let (key, mods) = shortcut.unwrap_or_default();
+        self.open.setKeyEquivalent(&NSString::from_str(&key));
+        let mut mask = NSEventModifierFlags::empty();
+        if mods.cmd {
+            mask |= NSEventModifierFlags::Command
+        }
+        if mods.option {
+            mask |= NSEventModifierFlags::Option
+        }
+        if mods.ctrl {
+            mask |= NSEventModifierFlags::Control
+        }
+        if mods.shift {
+            mask |= NSEventModifierFlags::Shift
+        }
+        self.open.setKeyEquivalentModifierMask(mask);
     }
 
     pub fn refresh_login(&self) {

@@ -122,11 +122,6 @@ fn main() {
             });
         }
     })
-    .global_shortcut(&config.hotkey, |s, tx| {
-        s.toggle_panel();
-        // The intro starts when the panel has the keyboard; this wakes the fallback in `tick`.
-        tx.wake_after(store::REVEAL_FALLBACK + Duration::from_millis(50));
-    })
     .on_ready(move |_| {
         if started.replace(true) {
             return;
@@ -145,6 +140,11 @@ fn start(s: &mut Cantrip, config: Config, handle: AppHandle<Cantrip>) {
     let Some(mtm) = objc2::MainThreadMarker::new() else {
         return;
     };
+
+    // The hotkey is registered here, not with the App builder, so Settings can change it.
+    s.hotkey = config.hotkey.clone();
+    s.register_hotkey();
+    s.login = s.services.login_enabled();
 
     let mut host = host::Host::new(config.clone(), handle.clone());
     host.start();
@@ -165,7 +165,7 @@ fn start(s: &mut Cantrip, config: Config, handle: AppHandle<Cantrip>) {
 
     let builtin = |command, b: Builtin, key| (command, b.title(), b.detail(), b.icon(), key);
     let menu = MainMenuSpec {
-        shortcut: config.menu_shortcut(),
+        shortcut: config::menu_shortcut(&config.hotkey),
         builtins: vec![
             builtin(MainCommand::OpenGrimoire, Builtin::OpenGrimoire, ""),
             builtin(MainCommand::RevealGrimoire, Builtin::RevealGrimoire, ""),
@@ -222,11 +222,15 @@ fn main_command(s: &mut Cantrip, command: MainCommand, tx: &mut Tx) {
         MainCommand::OpenJournal => s.perform_builtin(Builtin::OpenJournal, tx),
         MainCommand::ReloadGrimoire => s.perform_builtin(Builtin::ReloadGrimoire, tx),
         MainCommand::RestartHost => s.perform_builtin(Builtin::RestartHost, tx),
+        MainCommand::OpenSettings => {
+            s.show_panel();
+            s.perform_builtin(Builtin::OpenSettings, tx);
+            tx.wake_after(store::REVEAL_FALLBACK + Duration::from_millis(50));
+        }
         MainCommand::ToggleLogin => {
-            platform::login::toggle();
-            if let Some(item) = &s.services.main_item {
-                item.refresh_login();
-            }
+            s.services.toggle_login();
+            s.login = s.services.login_enabled();
+            s.changed();
         }
         MainCommand::Quit => tx.quit(),
     }

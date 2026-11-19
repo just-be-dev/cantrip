@@ -1031,3 +1031,171 @@ fn an_incantation_is_copied_out_from_its_export() {
         "the whole file when the export can't be found"
     );
 }
+
+/// A key pressed as the keyboard sends it, physical code and all (what a hotkey is made of).
+fn chord(rt: &mut Runtime<Cantrip>, key: rune::PhysicalKeyCode, mods: Mods) {
+    rt.physical_input(rune::PhysicalInput::Modifiers(mods));
+    for pressed in [true, false] {
+        rt.physical_input(rune::PhysicalInput::Key {
+            key,
+            mods,
+            pressed,
+            repeat: false,
+        });
+    }
+    settle(rt);
+}
+
+#[test]
+fn settings_open_from_the_search_the_menu_key_and_close_with_escape() {
+    let mut rt = runtime(fixtures::root);
+    type_text(&mut rt, "settings");
+    assert_eq!(titles(&rt)[0], "Settings");
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.settings.is_some());
+    assert_eq!(titles(&rt), ["Hotkey", "Theme", "Open at Login"]);
+    assert_eq!(rt.state.section(), Some("Settings"));
+    assert_eq!(rt.state.field.text, "", "the settings have their own query");
+    assert!(
+        rt.find("hotkey-keys").is_some(),
+        "the hotkey shows as keycaps"
+    );
+    assert!(
+        rt.find("settings").is_some(),
+        "the footer says where we are"
+    );
+    type_text(&mut rt, "login");
+    assert_eq!(titles(&rt), ["Open at Login"]);
+    press(&mut rt, Key::Escape);
+    press(&mut rt, Key::Escape);
+    assert!(rt.state.settings.is_none());
+    assert_eq!(
+        rt.state.query(),
+        "settings",
+        "back to the root search as it was"
+    );
+
+    // ⌘, opens them too.
+    press_with(
+        &mut rt,
+        Key::Command(','),
+        Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    );
+    assert!(rt.state.settings.is_some());
+}
+
+#[test]
+fn recording_makes_the_next_chord_the_hotkey_and_saves_it() {
+    use rune::PhysicalKeyCode as Code;
+    let mut rt = runtime(fixtures::root);
+    rt.update(|s, _| s.open_settings());
+    settle(&mut rt);
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.recording().is_some());
+    assert_eq!(
+        log(&mut rt),
+        ["suspend-hotkey"],
+        "the old hotkey is let go, so pressing it reaches the bar"
+    );
+    assert!(rt.find("hotkey-recording").is_some());
+    assert!(rt.find("cancel-hint").is_some());
+
+    // Modifiers show as they're held.
+    let held = Mods {
+        cmd: true,
+        shift: true,
+        ..Mods::default()
+    };
+    rt.physical_input(rune::PhysicalInput::Modifiers(held));
+    settle(&mut rt);
+    assert_eq!(rt.state.recording().unwrap().held, held);
+
+    // The chord becomes the hotkey: registered, saved, and not typed into the field.
+    chord(&mut rt, Code::KeyK, held);
+    assert!(rt.state.recording().is_none());
+    assert_eq!(rt.state.hotkey, "shift+cmd+k");
+    assert_eq!(rt.state.field.text, "");
+    assert_eq!(
+        log(&mut rt),
+        ["register-hotkey shift+cmd+k", "save-hotkey shift+cmd+k"]
+    );
+    assert_eq!(rt.state.toast.as_ref().unwrap().title, "Hotkey is ⇧⌘K");
+    assert!(rt.state.settings.is_some(), "still in the settings");
+
+    // ⌘↵ puts the default back, and takes it out of config.json.
+    press_with(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    );
+    assert_eq!(rt.state.hotkey, "option+space");
+    assert_eq!(
+        log(&mut rt),
+        ["register-hotkey option+space", "save-hotkey default"]
+    );
+}
+
+#[test]
+fn a_chord_without_a_modifier_is_refused_and_escape_keeps_the_old_hotkey() {
+    use rune::PhysicalKeyCode as Code;
+    let mut rt = runtime(fixtures::root);
+    rt.update(|s, _| s.open_settings());
+    press(&mut rt, Key::Enter);
+    log(&mut rt);
+    chord(&mut rt, Code::KeyK, Mods::default());
+    let recording = rt.state.recording().expect("still listening");
+    assert_eq!(recording.error.as_deref(), Some("Add ⌘, ⌃ or ⌥"));
+    assert_eq!(rt.state.field.text, "", "k went to the recorder");
+    assert!(log(&mut rt).is_empty(), "nothing registered");
+
+    chord(&mut rt, Code::Escape, Mods::default());
+    assert!(rt.state.recording().is_none());
+    assert!(rt.state.settings.is_some(), "Esc only stops listening");
+    assert_eq!(rt.state.hotkey, "option+space");
+    assert_eq!(log(&mut rt), ["register-hotkey option+space"]);
+
+    // Closing the bar mid-recording gives the old hotkey back too.
+    press(&mut rt, Key::Enter);
+    log(&mut rt);
+    rt.update(|s, _| s.hide_panel());
+    assert!(rt.state.recording().is_none());
+    assert!(log(&mut rt).contains(&"register-hotkey option+space".to_string()));
+}
+
+#[test]
+fn the_theme_and_login_settings() {
+    use crate::views::theme::Theme;
+    let mut rt = runtime(fixtures::root);
+    rt.update(|s, _| s.open_settings());
+    press(&mut rt, Key::Down);
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.picker.is_some(), "Theme opens the picker");
+    press(&mut rt, Key::Down);
+    press(&mut rt, Key::Enter);
+    assert_eq!(rt.state.theme, Theme::Arcane);
+    assert!(
+        rt.state.settings.is_some(),
+        "and comes back to the settings"
+    );
+    assert_eq!(rt.state.selection(), 1, "on the Theme row");
+    // Esc from the picker comes back too, wearing the old theme.
+    press(&mut rt, Key::Enter);
+    press(&mut rt, Key::Up);
+    press(&mut rt, Key::Escape);
+    assert!(rt.state.settings.is_some());
+    assert_eq!(rt.state.theme, Theme::Arcane);
+
+    press(&mut rt, Key::Down);
+    log(&mut rt);
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.login);
+    assert_eq!(log(&mut rt), ["toggle-login"]);
+    assert_eq!(rt.state.current_actions()[0].title, "Turn Off");
+}

@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use rune::{AppHandle, DisplayTarget, OverlayHandle, OverlayPlacement, ScreenEdge};
+use rune::{
+    AppHandle, DisplayTarget, OverlayHandle, OverlayPlacement, ScreenEdge, Shortcut, ShortcutError,
+    ShortcutId,
+};
 
 use crate::host::Host;
 use crate::platform::statusbar::{DaemonBar, MainItem};
@@ -30,6 +33,8 @@ pub struct Services {
     /// Set CANTRIP_KEEP_OPEN=1 to keep the bar up when it loses focus (handy while debugging spells).
     pub keep_open: bool,
     pub hud_generation: Arc<AtomicU64>,
+    /// The hotkey's registration and chord, while it has one (`register_hotkey`).
+    pub hotkey: Option<(ShortcutId, Shortcut)>,
     /// Effects a live app would have performed, for tests and headless runs.
     pub log: Vec<String>,
 }
@@ -162,6 +167,77 @@ impl Services {
             crate::platform::load_string("theme").and_then(|id| Theme::parse(&id))
         } else {
             None
+        }
+    }
+
+    /// Make `shortcut` the hotkey, system-wide: it's registered before the old one is let go,
+    /// so a refused chord leaves the old one working. The one it already is stays as it is.
+    pub fn register_hotkey(&mut self, shortcut: &Shortcut) -> Result<(), ShortcutError> {
+        if self
+            .hotkey
+            .as_ref()
+            .is_some_and(|(_, held)| held == shortcut)
+        {
+            return Ok(());
+        }
+        let Some(panel) = &self.panel else {
+            let name = crate::config::hotkey_name(shortcut);
+            self.log.push(format!("register-hotkey {name}"));
+            return Ok(());
+        };
+        let id = panel.register_shortcut(shortcut.clone(), Cantrip::hotkey_pressed)?;
+        if let Some((old, _)) = self.hotkey.replace((id, shortcut.clone())) {
+            let _ = panel.unregister_shortcut(old);
+        }
+        Ok(())
+    }
+
+    /// Let go of the hotkey while a new one is recorded, so pressing it reaches the bar
+    /// (`register_hotkey` takes it back).
+    pub fn suspend_hotkey(&mut self) {
+        match &self.panel {
+            Some(panel) => {
+                if let Some((id, _)) = self.hotkey.take() {
+                    let _ = panel.unregister_shortcut(id);
+                }
+            }
+            None => self.log.push("suspend-hotkey".into()),
+        }
+    }
+
+    /// Who holds `shortcut`, after it was refused, when Rune or macOS can say ("Spotlight").
+    pub fn hotkey_owner(&self, shortcut: &Shortcut) -> Option<String> {
+        self.panel.as_ref()?.shortcut_owner(shortcut)
+    }
+
+    /// Write the hotkey to config.json (None: back to the default), and show it in the menu.
+    pub fn save_hotkey(&mut self, hotkey: Option<&str>) -> Result<(), String> {
+        let shown = hotkey.unwrap_or(crate::config::DEFAULT_HOTKEY);
+        if let Some(item) = &self.main_item {
+            item.set_shortcut(crate::config::menu_shortcut(shown));
+        }
+        if self.live {
+            crate::config::Config::save_hotkey(hotkey)
+        } else {
+            self.log
+                .push(format!("save-hotkey {}", hotkey.unwrap_or("default")));
+            Ok(())
+        }
+    }
+
+    /// Whether Cantrip opens at login.
+    pub fn login_enabled(&self) -> bool {
+        self.live && crate::platform::login::enabled()
+    }
+
+    pub fn toggle_login(&mut self) {
+        if self.live {
+            crate::platform::login::toggle();
+            if let Some(item) = &self.main_item {
+                item.refresh_login();
+            }
+        } else {
+            self.log.push("toggle-login".into());
         }
     }
 

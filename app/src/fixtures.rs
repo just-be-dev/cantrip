@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::catalog::AppEntry;
 use crate::protocol::*;
-use crate::store::{Cantrip, Frame, Session, Toast};
+use crate::store::{Cantrip, Frame, Recording, Session, Toast};
 
 pub type Scene = (&'static str, fn(&mut Cantrip));
 
@@ -15,6 +15,10 @@ pub const SCENES: &[Scene] = &[
     ("root-arcane", root_arcane),
     ("opening-arcane", opening_arcane),
     ("themes", themes),
+    ("settings", settings),
+    ("settings-arcane", settings_arcane),
+    ("settings-recording", settings_recording),
+    ("settings-refused", settings_refused),
     ("grimoire", grimoire),
     ("grimoire-arcane", grimoire_arcane),
     ("grimoire-opening", grimoire_opening),
@@ -165,6 +169,47 @@ fn themes(s: &mut Cantrip) {
     s.type_query("them");
     s.open_theme_picker();
     s.set_selection(1);
+}
+
+/// The settings, on the hotkey, with Cantrip opening at login.
+fn settings(s: &mut Cantrip) {
+    root(s);
+    s.open_settings();
+    s.login = true;
+    s.changed();
+}
+
+fn settings_arcane(s: &mut Cantrip) {
+    settings(s);
+    s.set_theme(crate::views::theme::Theme::Arcane);
+}
+
+/// Recording a new hotkey, with ⇧⌘ held so far.
+fn settings_recording(s: &mut Cantrip) {
+    settings(s);
+    if let Some(settings) = &mut s.settings {
+        settings.recording = Some(Recording {
+            held: rune::Mods {
+                shift: true,
+                cmd: true,
+                ..rune::Mods::default()
+            },
+            error: None,
+        });
+    }
+    s.changed();
+}
+
+/// Recording, after a chord another app holds was refused.
+fn settings_refused(s: &mut Cantrip) {
+    settings(s);
+    if let Some(settings) = &mut s.settings {
+        settings.recording = Some(Recording {
+            held: rune::Mods::default(),
+            error: Some("⌘Space is taken by Spotlight".into()),
+        });
+    }
+    s.changed();
 }
 
 /// A grimoire with more in it than the root's: the book's scenes leaf through these.

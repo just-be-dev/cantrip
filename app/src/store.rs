@@ -7,7 +7,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use rune::{Key, KeyEvent, TextEdit, Tx};
+use rune::{
+    Key, KeyEvent, Mods, PhysicalInput, PhysicalKeyCode, Shortcut, ShortcutError, TextEdit, Tx,
+};
 
 use crate::catalog::AppEntry;
 use crate::fuzzy;
@@ -74,6 +76,20 @@ pub enum ActionKindItem {
         title: String,
         enabled: bool,
     },
+    /// A row of the settings (`Settings`).
+    Setting(Setting),
+}
+
+/// What the settings' rows do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setting {
+    /// Listen for a new hotkey (`Recording`).
+    RecordHotkey,
+    /// Back to ⌥Space.
+    ResetHotkey,
+    /// The theme picker, which comes back to the settings.
+    ChooseTheme,
+    ToggleLogin,
 }
 
 impl ActionItem {
@@ -109,17 +125,20 @@ pub enum Builtin {
     ChooseTheme,
     /// Switch the bar's magic to a theme, as the picker does when one is chosen.
     UseTheme(Theme),
+    /// Open the settings (`Settings`).
+    OpenSettings,
 }
 
 impl Builtin {
     /// The ones the root search offers. (`UseTheme` is the picker's.)
-    pub const ALL: [Builtin; 7] = [
+    pub const ALL: [Builtin; 8] = [
         Builtin::ReloadGrimoire,
         Builtin::RestartHost,
         Builtin::OpenGrimoire,
         Builtin::RevealGrimoire,
         Builtin::OpenJournal,
         Builtin::ChooseTheme,
+        Builtin::OpenSettings,
         Builtin::Quit,
     ];
 
@@ -134,6 +153,7 @@ impl Builtin {
             Builtin::ChooseTheme => "theme",
             Builtin::UseTheme(Theme::Sigil) => "theme:sigil",
             Builtin::UseTheme(Theme::Arcane) => "theme:arcane",
+            Builtin::OpenSettings => "settings",
         }
     }
 
@@ -150,6 +170,9 @@ impl Builtin {
             Builtin::Quit => "Close Cantrip",
             Builtin::ChooseTheme => "Preview the bar's magical themes and pick one",
             Builtin::UseTheme(t) => t.describe(),
+            Builtin::OpenSettings => {
+                "Change the hotkey, the theme, and whether Cantrip opens at login"
+            }
         }
     }
 
@@ -164,6 +187,7 @@ impl Builtin {
             Builtin::ChooseTheme => "Change Theme",
             Builtin::UseTheme(Theme::Sigil) => "Sigil Theme",
             Builtin::UseTheme(Theme::Arcane) => "Arcane Theme",
+            Builtin::OpenSettings => "Settings",
         }
     }
 
@@ -179,8 +203,29 @@ impl Builtin {
             Builtin::ChooseTheme => "paintpalette",
             Builtin::UseTheme(Theme::Sigil) => "seal",
             Builtin::UseTheme(Theme::Arcane) => "sparkles",
+            Builtin::OpenSettings => "gearshape",
         }
     }
+}
+
+/// Cantrip's own settings, over the root search: one row each (`settings_rows`), drawn with
+/// its control (`views::settings`). ↵ changes the highlighted one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Settings {
+    pub query: String,
+    pub selection: usize,
+    /// Listening for a new hotkey: every key goes to it, not the field.
+    pub recording: Option<Recording>,
+}
+
+/// A hotkey being recorded. The old one is let go meanwhile (so pressing it again reaches the
+/// bar), and taken back if this ends without a new one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Recording {
+    /// The modifiers held so far, shown as they go down.
+    pub held: Mods,
+    /// Why the last chord was refused.
+    pub error: Option<String>,
 }
 
 /// The theme picker, over the root search: one row per theme, the highlighted one worn live
@@ -192,6 +237,8 @@ pub struct ThemePicker {
     pub selection: usize,
     /// The theme in use when it opened.
     pub before: Theme,
+    /// Opened from the settings, on this row: it goes back to them.
+    pub settings: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -253,6 +300,14 @@ pub struct Cantrip {
     /// The grimoire as a book, open over the root search when no spell is
     /// (`Builtin::OpenGrimoire`). A spell cast from it opens over it, and Back returns to it.
     pub book: Option<Book>,
+    /// Open over the root search when no spell is (`Builtin::OpenSettings`).
+    pub settings: Option<Settings>,
+    /// The hotkey as config.json spells it ("option+space"), and why it isn't registered when
+    /// it isn't.
+    pub hotkey: String,
+    pub hotkey_error: Option<String>,
+    /// Whether Cantrip opens at login, as last asked.
+    pub login: bool,
     pub actions_open: bool,
     pub actions_selection: usize,
     pub toast: Option<Toast>,
@@ -313,6 +368,10 @@ impl Cantrip {
             session: None,
             picker: None,
             book: None,
+            settings: None,
+            hotkey: crate::config::DEFAULT_HOTKEY.into(),
+            hotkey_error: None,
+            login: false,
             actions_open: false,
             actions_selection: 0,
             toast: None,
@@ -359,6 +418,8 @@ impl Cantrip {
     fn root_field_query(&self) -> &str {
         if let Some(p) = &self.picker {
             &p.query
+        } else if let Some(s) = &self.settings {
+            &s.query
         } else if let Some(b) = &self.book {
             &b.query
         } else {
@@ -407,6 +468,9 @@ impl Cantrip {
             picker.selection = 0;
             self.changed();
             self.preview_theme();
+        } else if let Some(settings) = &mut self.settings {
+            settings.query = text;
+            settings.selection = 0;
         } else if let Some(book) = &mut self.book {
             book.query = text;
             book.selection = 0;
@@ -437,9 +501,10 @@ impl Cantrip {
     pub fn selection(&self) -> usize {
         match &self.session {
             Some(s) => s.frames.last().map_or(0, |f| f.selection),
-            None => match (&self.picker, &self.book) {
-                (Some(p), _) => p.selection,
-                (_, Some(b)) => b.selection,
+            None => match (&self.picker, &self.settings, &self.book) {
+                (Some(p), _, _) => p.selection,
+                (_, Some(s), _) => s.selection,
+                (_, _, Some(b)) => b.selection,
                 _ => self.root_selection,
             },
         }
@@ -457,10 +522,11 @@ impl Cantrip {
                     p.selection = index;
                     self.preview_theme();
                 }
-                // A leaf turns toward it.
-                None => match &mut self.book {
-                    Some(b) => b.select(index),
-                    None => self.root_selection = index,
+                None => match (&mut self.settings, &mut self.book) {
+                    (Some(s), _) => s.selection = index,
+                    // A leaf turns toward it.
+                    (_, Some(b)) => b.select(index),
+                    _ => self.root_selection = index,
                 },
             },
         }
@@ -472,6 +538,8 @@ impl Cantrip {
             None
         } else if self.picker.is_some() {
             Some("Themes")
+        } else if self.settings.is_some() {
+            Some("Settings")
         } else {
             Some("Results")
         }
@@ -481,6 +549,13 @@ impl Cantrip {
         let Some(session) = &self.session else {
             if self.picker.is_some() {
                 return "Choose a theme…".into();
+            }
+            if let Some(settings) = &self.settings {
+                return if settings.recording.is_some() {
+                    "Press the new hotkey…".into()
+                } else {
+                    "Search settings…".into()
+                };
             }
             if self.book.is_some() {
                 return "Search the grimoire…".into();
@@ -516,6 +591,9 @@ impl Cantrip {
         let Some(session) = &self.session else {
             if let Some(picker) = &self.picker {
                 return theme_rows(&picker.query, picker.before);
+            }
+            if let Some(settings) = &self.settings {
+                return self.settings_rows(&settings.query);
             }
             if let Some(book) = &self.book {
                 return crate::views::book::rows(&self.commands, &self.entries, &book.query);
@@ -711,6 +789,9 @@ impl Cantrip {
 
     pub fn perform(&mut self, action: ActionItem, tx: &mut Tx) {
         self.actions_open = false;
+        if action.kind != ActionKindItem::Setting(Setting::RecordHotkey) {
+            self.stop_recording();
+        }
         if self.session.is_none() {
             self.wand.cue(Gesture::Cast);
         }
@@ -756,6 +837,7 @@ impl Cantrip {
                 };
                 self.show_toast(ToastStyle::Success, &title, None, tx);
             }
+            ActionKindItem::Setting(setting) => self.perform_setting(setting, tx),
         }
     }
 
@@ -832,12 +914,19 @@ impl Cantrip {
             }
             Builtin::Quit => tx.quit(),
             Builtin::ChooseTheme => self.open_theme_picker(),
+            Builtin::OpenSettings => self.open_settings(),
             Builtin::UseTheme(theme) => {
                 if let Some(picker) = self.picker.take() {
-                    // Back to a fresh root search, wearing it.
+                    // Back to the settings it came from, or a fresh root search, wearing it.
                     self.wand.edited(&picker.query, "", theme);
-                    self.root_query.clear();
-                    self.root_selection = 0;
+                    match picker.settings {
+                        Some(row) => self.settings = Some(Settings::at(row)),
+                        None => {
+                            self.root_query.clear();
+                            self.root_selection = 0;
+                        }
+                    }
+                    self.changed();
                     self.sync_field();
                 }
                 self.set_theme(theme);
@@ -859,6 +948,7 @@ impl Cantrip {
     pub fn open_book(&mut self) {
         self.end_session();
         self.cancel_theme_picker();
+        self.close_settings();
         let was = self.root_field_query().to_string();
         self.wand.edited(&was, "", self.theme);
         self.book = Some(Book::new());
@@ -878,16 +968,21 @@ impl Cantrip {
         self.sync_field();
     }
 
-    /// Opens the theme picker on the theme in use. The root query goes back into the wand.
+    /// Opens the theme picker on the theme in use. The query under it (the root's, or the
+    /// settings' when it's opened from them) goes back into the wand.
     pub fn open_theme_picker(&mut self) {
         self.end_session();
         self.close_book();
+        self.stop_recording();
+        let from = self.settings.take();
         let before = self.theme;
-        self.wand.edited(&self.root_query, "", before);
+        let under = from.as_ref().map_or(&self.root_query, |s| &s.query);
+        self.wand.edited(under, "", before);
         self.picker = Some(ThemePicker {
             query: String::new(),
             selection: Theme::ALL.iter().position(|t| *t == before).unwrap_or(0),
             before,
+            settings: from.map(|s| s.selection),
         });
         self.actions_open = false;
         self.changed();
@@ -901,10 +996,322 @@ impl Cantrip {
             return;
         };
         self.set_theme(picker.before);
-        self.wand
-            .edited(&picker.query, &self.root_query, picker.before);
+        match picker.settings {
+            Some(row) => {
+                self.wand.edited(&picker.query, "", picker.before);
+                self.settings = Some(Settings::at(row));
+            }
+            None => self
+                .wand
+                .edited(&picker.query, &self.root_query, picker.before),
+        }
         self.actions_open = false;
+        self.changed();
         self.sync_field();
+    }
+
+    // MARK: Settings
+
+    /// Opens the settings. The root query goes back into the wand.
+    pub fn open_settings(&mut self) {
+        self.end_session();
+        self.close_book();
+        self.cancel_theme_picker();
+        self.login = self.services.login_enabled();
+        if self.settings.is_none() {
+            self.wand.edited(&self.root_query, "", self.theme);
+            self.settings = Some(Settings::default());
+        }
+        self.actions_open = false;
+        self.changed();
+        self.sync_field();
+    }
+
+    /// Closes the settings, back to the root search and its query.
+    pub fn close_settings(&mut self) {
+        self.stop_recording();
+        let Some(settings) = self.settings.take() else {
+            return;
+        };
+        self.wand
+            .edited(&settings.query, &self.root_query, self.theme);
+        self.actions_open = false;
+        self.changed();
+        self.sync_field();
+    }
+
+    fn perform_setting(&mut self, setting: Setting, tx: &mut Tx) {
+        match setting {
+            Setting::RecordHotkey => self.begin_recording(),
+            Setting::ResetHotkey => {
+                let default: Shortcut = crate::config::DEFAULT_HOTKEY
+                    .parse()
+                    .expect("the default hotkey is a shortcut");
+                if let Err(why) = self.change_hotkey(&default, true, tx) {
+                    self.show_toast(ToastStyle::Failure, "Hotkey unchanged", Some(why), tx);
+                }
+            }
+            Setting::ChooseTheme => self.open_theme_picker(),
+            Setting::ToggleLogin => {
+                self.services.toggle_login();
+                self.login = if self.services.live {
+                    self.services.login_enabled()
+                } else {
+                    !self.login
+                };
+                self.changed();
+                let title = if self.login {
+                    "Cantrip opens at login"
+                } else {
+                    "Cantrip won't open at login"
+                };
+                self.show_toast(ToastStyle::Success, title, None, tx);
+            }
+        }
+    }
+
+    /// The settings' rows matching `query`. Each one's control is drawn from the state
+    /// (`views::settings`); their accessories stay empty.
+    fn settings_rows(&self, query: &str) -> Vec<Row> {
+        let recording = self.settings.as_ref().and_then(|s| s.recording.as_ref());
+        let default_keys = crate::config::hotkey_keycaps(crate::config::DEFAULT_HOTKEY).join("");
+        let hotkey_note = match recording {
+            Some(Recording { error: Some(e), .. }) => e.clone(),
+            Some(_) => "Press it with ⌘, ⌃ or ⌥ · Esc cancels".into(),
+            None => match &self.hotkey_error {
+                Some(e) => e.clone(),
+                None => "Opens and closes the bar from anywhere".into(),
+            },
+        };
+        let setting = |id: &str, title: &str, subtitle: String, icon: &str, actions| Row {
+            id: format!("setting:{id}"),
+            title: title.into(),
+            subtitle: Some(subtitle),
+            icon: Icon::parse(Some(icon)),
+            accessories: Vec::new(),
+            actions,
+        };
+        let action = |id: &str, title: &str, icon: &str, setting: Setting| {
+            ActionItem::new(id, title, icon, ActionKindItem::Setting(setting))
+        };
+        let rows = [
+            (
+                setting(
+                    "hotkey",
+                    "Hotkey",
+                    hotkey_note,
+                    "keyboard",
+                    vec![
+                        action(
+                            "record",
+                            "Record Hotkey",
+                            "record.circle",
+                            Setting::RecordHotkey,
+                        ),
+                        action(
+                            "reset",
+                            &format!("Reset Hotkey to {default_keys}"),
+                            "arrow.counterclockwise",
+                            Setting::ResetHotkey,
+                        ),
+                    ],
+                ),
+                "shortcut keyboard key",
+            ),
+            (
+                setting(
+                    "theme",
+                    "Theme",
+                    self.theme.describe().into(),
+                    Builtin::ChooseTheme.icon(),
+                    vec![action(
+                        "theme",
+                        "Change Theme",
+                        "paintpalette",
+                        Setting::ChooseTheme,
+                    )],
+                ),
+                "magic look appearance",
+            ),
+            (
+                setting(
+                    "login",
+                    "Open at Login",
+                    "Start Cantrip when you log in, so the hotkey always works".into(),
+                    "sunrise",
+                    vec![action(
+                        "login",
+                        if self.login { "Turn Off" } else { "Turn On" },
+                        "power",
+                        Setting::ToggleLogin,
+                    )],
+                ),
+                "launch startup boot",
+            ),
+        ];
+        rows.into_iter()
+            .filter(|(row, words)| {
+                query.is_empty()
+                    || fuzzy::score_fields(
+                        query,
+                        &[&row.title, row.subtitle.as_deref().unwrap_or(""), words],
+                    )
+                    .is_some()
+            })
+            .map(|(row, _)| row)
+            .collect()
+    }
+
+    /// Whether a new hotkey is being recorded.
+    pub fn recording(&self) -> Option<&Recording> {
+        self.settings.as_ref()?.recording.as_ref()
+    }
+
+    /// Listen for a new hotkey. The old one is let go meanwhile, so pressing it reaches us.
+    fn begin_recording(&mut self) {
+        let Some(settings) = &mut self.settings else {
+            return;
+        };
+        if settings.recording.is_some() {
+            return;
+        }
+        settings.recording = Some(Recording::default());
+        self.services.suspend_hotkey();
+        self.changed();
+    }
+
+    /// Stop listening without a new hotkey: the old one comes back.
+    pub fn stop_recording(&mut self) {
+        let Some(settings) = &mut self.settings else {
+            return;
+        };
+        if settings.recording.take().is_none() {
+            return;
+        }
+        self.register_hotkey();
+        self.changed();
+    }
+
+    /// Registers `hotkey` system-wide, noting why when it can't be (`hotkey_error`).
+    pub fn register_hotkey(&mut self) {
+        self.hotkey_error = match self.hotkey.parse::<Shortcut>() {
+            Ok(shortcut) => match self.services.register_hotkey(&shortcut) {
+                Ok(()) => None,
+                Err(e) => Some(self.refusal(&e, &shortcut)),
+            },
+            Err(_) => Some(format!("“{}” isn't a shortcut: record one", self.hotkey)),
+        };
+        if let Some(why) = &self.hotkey_error {
+            eprintln!("Cantrip: hotkey {}: {why}", self.hotkey);
+        }
+    }
+
+    /// The hotkey was pressed, anywhere.
+    pub fn hotkey_pressed(&mut self, tx: &mut Tx) {
+        self.toggle_panel();
+        // The intro starts when the panel has the keyboard; this wakes the fallback in `tick`.
+        tx.wake_after(REVEAL_FALLBACK + Duration::from_millis(50));
+    }
+
+    /// Why `shortcut` can't be the hotkey, in a sentence: who has it, when that's known.
+    fn refusal(&self, error: &ShortcutError, shortcut: &Shortcut) -> String {
+        let keys = shortcut.keycaps().join("");
+        match (error, self.services.hotkey_owner(shortcut)) {
+            (ShortcutError::Conflict, Some(owner)) => format!("{keys} is taken by {owner}"),
+            _ => rune_kit::shortcut_error_message(error, Some(shortcut))
+                .trim_end_matches('.')
+                .to_string(),
+        }
+    }
+
+    /// Make `shortcut` the hotkey: registered, saved to config.json (`reset` takes it out of
+    /// the file instead, so the default applies) and shown. On Err, why it was refused; the
+    /// old one stays.
+    fn change_hotkey(
+        &mut self,
+        shortcut: &Shortcut,
+        reset: bool,
+        tx: &mut Tx,
+    ) -> Result<(), String> {
+        if let Err(e) = self.services.register_hotkey(shortcut) {
+            return Err(self.refusal(&e, shortcut));
+        }
+        self.hotkey = crate::config::hotkey_name(shortcut);
+        self.hotkey_error = None;
+        if let Some(settings) = &mut self.settings {
+            settings.recording = None;
+        }
+        self.changed();
+        let keys = shortcut.keycaps().join("");
+        let saved = self.hotkey.clone();
+        match self
+            .services
+            .save_hotkey((!reset).then_some(saved.as_str()))
+        {
+            Ok(()) => {
+                self.wand.cue(Gesture::Recharge);
+                self.show_toast(ToastStyle::Success, &format!("Hotkey is {keys}"), None, tx);
+            }
+            Err(why) => self.show_toast(
+                ToastStyle::Failure,
+                &format!("{keys} works until Cantrip quits"),
+                Some(why),
+                tx,
+            ),
+        }
+        Ok(())
+    }
+
+    /// Keys while a hotkey is recorded, before the field or anything else hears them: held
+    /// modifiers show as they go down, a chord with ⌘, ⌃ or ⌥ becomes the hotkey, and Esc
+    /// gives up. True when it took the key (always, while recording).
+    pub fn record_input(&mut self, event: &PhysicalInput, tx: &mut Tx) -> bool {
+        let Some(recording) = self.settings.as_mut().and_then(|s| s.recording.as_mut()) else {
+            return false;
+        };
+        let (key, mods) = match *event {
+            PhysicalInput::FocusLost => {
+                self.stop_recording();
+                return false;
+            }
+            PhysicalInput::Modifiers(mods) => {
+                recording.held = mods;
+                return true;
+            }
+            PhysicalInput::Key {
+                key,
+                mods,
+                pressed,
+                repeat,
+            } => {
+                recording.held = mods;
+                if !pressed || repeat || is_modifier(key) {
+                    return true;
+                }
+                (key, mods)
+            }
+        };
+        if key == PhysicalKeyCode::Escape && !(mods.cmd || mods.ctrl || mods.alt) {
+            self.stop_recording();
+            return true;
+        }
+        let chord =
+            Shortcut::from_physical_key(key, mods).and_then(|s| s.require_modifier().map(|()| s));
+        let refused = match chord {
+            Ok(shortcut) => self.change_hotkey(&shortcut, false, tx).err(),
+            Err(e) => Some(match Shortcut::from_physical_key(key, mods) {
+                Ok(shortcut) => self.refusal(&e, &shortcut),
+                Err(_) => "That key can't be part of a hotkey".into(),
+            }),
+        };
+        if let Some(why) = refused {
+            self.wand.cue(Gesture::Bump { up: false });
+            if let Some(recording) = self.settings.as_mut().and_then(|s| s.recording.as_mut()) {
+                recording.error = Some(why);
+            }
+            self.changed();
+        }
+        true
     }
 
     /// Wear the picker's highlighted theme.
@@ -977,7 +1384,9 @@ impl Cantrip {
     /// Back to the root search with an empty query.
     pub fn reset(&mut self) {
         self.end_session();
+        self.stop_recording();
         self.book = None;
+        self.settings = None;
         self.root_query.clear();
         self.root_selection = 0;
         self.changed();
@@ -1022,6 +1431,7 @@ impl Cantrip {
         }
         // Leaving without choosing is choosing nothing.
         self.cancel_theme_picker();
+        self.stop_recording();
         self.visible = false;
         self.focused = false;
         self.revealed = false;
@@ -1120,9 +1530,10 @@ impl Cantrip {
         let shown = at_root && (self.visible && self.revealed || self.closing);
         let fizzled = self.session.is_none() && !self.query().is_empty() && self.rows().is_empty();
         // Field by field, so the wand can be borrowed beside it.
-        let query = match (&self.picker, &self.book) {
-            (Some(p), _) => &p.query,
-            (_, Some(b)) => &b.query,
+        let query = match (&self.picker, &self.settings, &self.book) {
+            (Some(p), _, _) => &p.query,
+            (_, Some(s), _) => &s.query,
+            (_, _, Some(b)) => &b.query,
             _ => &self.root_query,
         };
         let signals = Signals {
@@ -1194,6 +1605,7 @@ impl Cantrip {
             Key::Command('r') if !m.shift && self.session.is_none() => {
                 self.perform_builtin(Builtin::ReloadGrimoire, tx)
             }
+            Key::Command(',') if !m.shift && self.session.is_none() => self.open_settings(),
             Key::Escape => self.escape(),
             _ => return false,
         }
@@ -1250,12 +1662,15 @@ impl Cantrip {
             return;
         }
         let header = self.section().is_some();
-        let (top, bottom) =
-            if self.session.is_none() && self.picker.is_none() && self.book.is_some() {
-                crate::views::book::index_span(self.selection())
-            } else {
-                crate::views::row_span(self.selection(), header)
-            };
+        let (top, bottom) = if self.session.is_none()
+            && self.picker.is_none()
+            && self.settings.is_none()
+            && self.book.is_some()
+        {
+            crate::views::book::index_span(self.selection())
+        } else {
+            crate::views::row_span(self.selection(), header)
+        };
         let from = match self.scroll_target {
             Some((target, asked)) if asked.elapsed() < GLIDE_RECENT => target,
             _ => at.offset,
@@ -1281,6 +1696,8 @@ impl Cantrip {
     fn escape(&mut self) {
         if self.actions_open {
             self.actions_open = false;
+        } else if self.recording().is_some() {
+            self.stop_recording();
         } else if self.session.is_some() {
             self.pop_frame();
         } else if !self.query().is_empty() {
@@ -1288,6 +1705,8 @@ impl Cantrip {
             self.sync_field();
         } else if self.picker.is_some() {
             self.cancel_theme_picker();
+        } else if self.settings.is_some() {
+            self.close_settings();
         } else if self.book.is_some() {
             self.close_book();
         } else {
@@ -1467,6 +1886,34 @@ fn theme_rows(query: &str, current: Theme) -> Vec<Row> {
             )],
         })
         .collect()
+}
+
+impl Settings {
+    /// Open on row `selection`.
+    pub fn at(selection: usize) -> Self {
+        Settings {
+            selection,
+            ..Settings::default()
+        }
+    }
+}
+
+fn is_modifier(key: PhysicalKeyCode) -> bool {
+    use PhysicalKeyCode::*;
+    matches!(
+        key,
+        ShiftLeft
+            | ShiftRight
+            | ControlLeft
+            | ControlRight
+            | AltLeft
+            | AltRight
+            | SuperLeft
+            | SuperRight
+            | CapsLock
+            | Fn
+            | FnLock
+    )
 }
 
 /// The element key of the row at `index` in the results list.

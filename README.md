@@ -48,10 +48,11 @@ The enabled ones are listed in the grimoire's `spells.json`
 from before this had everything in it enabled when it was first upgraded.
 
 The installed app turns on **Launch at Login** the first time it runs. Toggle
-it from the 🪄 menu bar icon. The menu also has:
+it from the 🪄 menu bar icon, or in **Settings**. The menu also has:
 
 | Item | Does |
 |-|-|
+| Settings… (⌘,) | the hotkey, the theme, and opening at login (see [Settings](#settings)) |
 | Open Grimoire | opens your spells folder |
 | Open Journal | opens the host's log |
 | Reload Grimoire (⌘R) | loads new and changed spells (saving a file does this too) |
@@ -69,6 +70,7 @@ The bar's search finds the same commands.
 | ⌘K | every action for the selection |
 | Esc | close actions → go back one view → clear the search → hide |
 | ⌘R | Reload Grimoire (from the root search) |
+| ⌘, | Settings |
 
 The bar hides when it loses focus. Reopen it within 90 seconds and you're
 right where you left off; after that it starts fresh.
@@ -275,9 +277,21 @@ $ cantrip            # lists every command from your grimoire
   link somewhere else. Names are lowercase (`a-z0-9._-`) and unique across the
   grimoire.
 
+## Settings
+
+Search the bar for **Settings** (or press ⌘,, or pick **Settings…** in the 🪄
+menu):
+
+- **Hotkey**: press ↵, then the new chord. It needs ⌘, ⌃ or ⌥; Esc gives up
+  and keeps the old one. A chord another app or macOS already uses (⌘ Space is
+  Spotlight's) is refused, and the row says who has it. The new hotkey works at
+  once and is written to `config.json`. ⌘↵ resets it to ⌥ Space.
+- **Theme**: opens the theme picker, which comes back to Settings.
+- **Open at Login**: ↵ toggles it.
+
 ## Config
 
-`~/.config/cantrip/config.json` (optional):
+`~/.config/cantrip/config.json` (optional; Settings writes `hotkey` for you):
 
 ```json
 { "hotkey": "option+space", "bun": "/opt/homebrew/bin/bun", "theme": "sigil" }
@@ -285,11 +299,12 @@ $ cantrip            # lists every command from your grimoire
 
 `theme` is the bar's magic: `sigil` (the default: ink and tarnished gold, letters
 that arrive as orbs and runes) or `arcane` (violet glass, sparkles and sparks).
-Search for **Sigil Theme** or **Arcane Theme** in the bar to switch on the fly;
-the one you pick there is remembered and wins over the config file.
+**Change Theme** in the bar (or Settings) switches on the fly; the one you
+pick there is remembered and wins over the config file.
 
 The hotkey takes `cmd`, `option`, `ctrl`, and `shift`, plus a key
-(`space`, `a`–`z`, `0`–`9`, …). Without a `bun` entry, Cantrip runs the bun
+(`space`, `a`–`z`, `0`–`9`, `f1`–`f20`, `comma`, …). Edited by hand, it takes
+effect the next time Cantrip starts. Without a `bun` entry, Cantrip runs the bun
 inside the app (`scripts/bundle.sh` copies the version mise.toml pins), so the
 installed app needs no bun of its own. A `cargo run` build looks in
 `~/.bun/bin`, the mise shims, Homebrew, and your login shell. It needs bun ≥

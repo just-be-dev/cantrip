@@ -16,7 +16,8 @@ rune-kit = { git = "https://github.com/anomalyco/rune", rev = "07c369b13e8bd82c3
 serde = { version = "1", features = ["derive"] }
 # The compositor's page curve (`views/book/warp.rs`): Rune's own wgpu, at its version.
 wgpu = { version = "~30.0.1", default-features = false, features = ["wgsl"] }
-serde_json = "1"
+# preserve_order: saving the hotkey leaves config.json the way it was written.
+serde_json = { version = "1", features = ["preserve_order"] }
 # The illuminated initials (`views/book/initial/`) are filled and stroked with it; resvg
 # already brings it in.
 tiny-skia = "0.11.4"

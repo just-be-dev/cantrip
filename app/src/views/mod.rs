@@ -7,6 +7,7 @@ pub mod intro;
 pub mod outro;
 pub mod palette;
 pub mod runes;
+pub mod settings;
 pub mod theme;
 pub mod wand;
 
@@ -407,6 +408,8 @@ fn search_bar(s: &Cantrip, look: Look) -> El {
             s.reveal_selection(tx);
         })
         .on_input_key(|s: &mut Cantrip, ev, tx| s.handle_key(ev, tx))
+        // Recording a hotkey, every key is the hotkey's before it's the field's.
+        .on_physical_input(|s: &mut Cantrip, ev, tx| s.record_input(ev, tx))
         // Real ↵ is taken by the key handler; this covers accessibility (AXConfirm).
         .on_submit(|s: &mut Cantrip, tx: &mut Tx| s.submit(false, tx));
     row()
@@ -458,7 +461,8 @@ fn content(s: &Cantrip, look: Look) -> El {
         detail_view(markdown, metadata, look)
     } else if s.session.is_some() && s.current_view().is_none() {
         el()
-    } else if s.session.is_none() && s.picker.is_none() && s.book.is_some() {
+    } else if s.session.is_none() && s.picker.is_none() && s.settings.is_none() && s.book.is_some()
+    {
         book::view(s, look)
     } else {
         results(s, look)
@@ -516,12 +520,18 @@ fn results(s: &Cantrip, look: Look) -> El {
                 ),
         );
     }
+    let settings = s.session.is_none() && s.picker.is_none() && s.settings.is_some();
     for (i, r) in rows.iter().enumerate() {
         let rise = look
             .intro
             .filter(|_| s.intro_rows && i < intro::STAGGERED_ROWS)
             .map(|intro| intro.row(i));
-        list = list.child(play(row_view(r, i, i == selection, look), rise));
+        let end = if settings {
+            settings::control(s, r, look)
+        } else {
+            (None, None)
+        };
+        list = list.child(play(row_view(r, i, i == selection, look, end), rise));
     }
     // The selection is one element that glides from row to row, under them and outside the
     // list's instant changes, so filtering snaps while moving the selection springs.
@@ -630,7 +640,15 @@ fn chip(label: &str, selected: bool, look: Look) -> El {
         .child(text(label.to_string()).font(font(11.0, 600.0)).color(c))
 }
 
-fn row_view(r: &Row, index: usize, selected: bool, look: Look) -> El {
+/// A row of the results. A setting's ends in its control (in place of accessories), and may
+/// tint its subtitle (`settings::control`).
+fn row_view(
+    r: &Row,
+    index: usize,
+    selected: bool,
+    look: Look,
+    (control, subtitle_color): (Option<El>, Option<Color>),
+) -> El {
     let p = look.p;
     let icon = match &r.icon {
         // App icons bring their own tile.
@@ -681,7 +699,7 @@ fn row_view(r: &Row, index: usize, selected: bool, look: Look) -> El {
         Some(subtitle) => line.child(
             text(subtitle.clone())
                 .font(font(13.0, 400.0))
-                .color(p.muted)
+                .color(subtitle_color.unwrap_or(p.muted))
                 .truncate()
                 .grow(1.0)
                 .min_w(0.0)
@@ -692,7 +710,10 @@ fn row_view(r: &Row, index: usize, selected: bool, look: Look) -> El {
     for accessory in &r.accessories {
         line = line.child(chip(accessory, selected, look));
     }
-    line
+    match control {
+        Some(control) => line.child(control),
+        None => line,
+    }
 }
 
 fn detail_view(markdown: &str, metadata: &[WireMetadata], look: Look) -> El {
@@ -870,6 +891,14 @@ fn footer(s: &Cantrip, look: Look) -> El {
     } else if s.picker.is_some() {
         let choose = crate::store::Builtin::ChooseTheme;
         footer_title("picker", &Icon::parse(Some(choose.icon())), "Themes", look)
+    } else if s.settings.is_some() {
+        let open = crate::store::Builtin::OpenSettings;
+        footer_title(
+            "settings",
+            &Icon::parse(Some(open.icon())),
+            "Settings",
+            look,
+        )
     } else {
         match p.theme {
             Theme::Arcane => row()
@@ -898,15 +927,27 @@ fn footer(s: &Cantrip, look: Look) -> El {
         .fill(Color::BLACK.alpha(0.22))
         .child(leading)
         .child(spacer().min_w(12.0));
+    let rule = el().h(1.0).w_full().fill(Color::WHITE.alpha(0.06));
+    if s.recording().is_some() {
+        // Every key is the hotkey's now; only Esc means anything else.
+        return col().w_full().child(rule).child(bar.child(key_hint(
+            "cancel-hint",
+            "Cancel",
+            &["esc"],
+            look,
+        )));
+    }
     if let Some(primary) = s.current_actions().first() {
         bar = bar
             .child(key_hint("primary-hint", &primary.title, &["↵"], look))
             .child(el().w(1.0).h(16.0).fill(Color::WHITE.alpha(0.08)));
     }
-    col()
-        .w_full()
-        .child(el().h(1.0).w_full().fill(Color::WHITE.alpha(0.06)))
-        .child(bar.child(key_hint("actions-hint", "Actions", &["⌘", "K"], look)))
+    col().w_full().child(rule).child(bar.child(key_hint(
+        "actions-hint",
+        "Actions",
+        &["⌘", "K"],
+        look,
+    )))
 }
 
 fn keycap(label: &str, look: Look) -> El {
